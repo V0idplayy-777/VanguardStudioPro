@@ -104,7 +104,8 @@ export async function thumbnailFor(clip: Clip, asset: MediaAsset | undefined, sr
 }
 
 function hashDoc(clip: Clip) {
-  const s = JSON.stringify(clip.graphic?.layers.map((l) => [l.id, (l as any).text, l.fill, l.x.value, l.y.value, l.scale.value]));
+  const layers = clip.graphic?.layers ?? [];
+  const s = JSON.stringify(layers.map((l) => [l.id, (l as any).text, l.fill, l.x?.value, l.y?.value, l.scale?.value]));
   let h = 0;
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
   return h.toString(36);

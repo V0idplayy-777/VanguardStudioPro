@@ -6,6 +6,9 @@ import react from '@vitejs/plugin-react';
 const behindProxy = process.env.VSP_PROXY === '1';
 
 export default defineConfig({
+  // Relative base so the same build works at a domain root, under a GitHub Pages
+  // project path (/<repo>/), or opened from any sub-folder.
+  base: './',
   plugins: [react()],
   server: {
     host: '0.0.0.0',

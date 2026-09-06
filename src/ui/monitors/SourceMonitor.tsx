@@ -182,6 +182,7 @@ export function SourceMonitor() {
     e.dataTransfer.effectAllowed = 'copy';
     useTimelineView.getState().setExternalDrag({ kind: 'asset', ids: [asset.id], part });
   };
+  const onDragEnd = () => useTimelineView.getState().setExternalDrag(null);
 
   const pseudoSeq = useMemo<Sequence | null>(() => {
     if (!asset) return null;
@@ -209,7 +210,7 @@ export function SourceMonitor() {
       </div>
       <div ref={wrapRef} className="viewport" onDoubleClick={() => asset && cmd.revealAsset(asset.id)}>
         {asset ? (
-          <canvas ref={canvasRef} style={{ left: geom.x, top: geom.y, width: geom.w, height: geom.h }} draggable onDragStart={(e) => onDragStart(e, 'composite')} title="Drag to the timeline to edit this clip in" />
+          <canvas ref={canvasRef} style={{ left: geom.x, top: geom.y, width: geom.w, height: geom.h }} draggable onDragStart={(e) => onDragStart(e, 'composite')} onDragEnd={onDragEnd} title="Drag to the timeline to edit this clip in" />
         ) : (
           <Empty title="Source Monitor">Double-click a clip in the Project panel to load it here. Mark In and Out, then press , (comma) to insert or . (period) to overwrite into the sequence.</Empty>
         )}
@@ -234,8 +235,8 @@ export function SourceMonitor() {
         </div>
         {asset && asset.kind !== 'image' && asset.kind !== 'audio' ? (
           <span className="drag-handles" title="Drag only video or only audio to the timeline">
-            <span draggable onDragStart={(e) => onDragStart(e, 'video')} className="handle" title="Drag video only"><Icon name="clipVideo" size={12} /></span>
-            <span draggable onDragStart={(e) => onDragStart(e, 'audio')} className="handle" title="Drag audio only"><Icon name="clipAudio" size={12} /></span>
+            <span draggable onDragStart={(e) => onDragStart(e, 'video')} onDragEnd={onDragEnd} className="handle" title="Drag video only"><Icon name="clipVideo" size={12} /></span>
+            <span draggable onDragStart={(e) => onDragStart(e, 'audio')} onDragEnd={onDragEnd} className="handle" title="Drag audio only"><Icon name="clipAudio" size={12} /></span>
           </span>
         ) : null}
         <TimecodeField frames={asset ? Math.round(((asset.srcOut ?? dur) - (asset.srcIn ?? 0)) * fps) : 0} fps={fps} muted title="In to Out duration" />

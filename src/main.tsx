@@ -12,7 +12,7 @@ import { useGlobalShortcuts } from './app/shortcuts';
 import { useUI, toast, logEvent } from './state/uiStore';
 import { useProject, useActiveSequence, sequenceDuration } from './state/projectStore';
 import { usePlayback } from './engine/playback/playback';
-import { startAutosave, autosaveInfo, openProjectFile } from './engine/project/serialize';
+import { startAutosave, stopAutosave, autosaveInfo, openProjectFile } from './engine/project/serialize';
 import { classifyFile, importFiles } from './engine/media/importer';
 import { onEgg, type EggEvent } from './easter/eggs';
 import { cmd } from './app/commands';
@@ -196,9 +196,7 @@ function App() {
   useEffect(() => {
     if (!autoSave) return;
     startAutosave(Math.max(1, interval) * 60000);
-    return () => {
-      import('./engine/project/serialize').then((m) => m.stopAutosave());
-    };
+    return () => stopAutosave();
   }, [autoSave, interval]);
 
   // First run: welcome, or offer the autosave if one exists. The timeline itself always starts empty.
@@ -228,6 +226,17 @@ function App() {
       window.removeEventListener('error', onErr);
       window.removeEventListener('unhandledrejection', onRej);
     };
+  }, []);
+
+  // Unsaved work: ask before the tab closes (the browser shows its own generic prompt).
+  useEffect(() => {
+    const onUnload = (e: BeforeUnloadEvent) => {
+      if (!useProject.getState().dirty) return;
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onUnload);
+    return () => window.removeEventListener('beforeunload', onUnload);
   }, []);
 
   useEffect(() => {

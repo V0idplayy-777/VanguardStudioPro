@@ -7,7 +7,7 @@ import { LABEL_COLORS } from '../../types/project';
 import * as E from '../../engine/timeline/edits';
 import { cmd, resolveParam } from '../../app/commands';
 import { onTimelineEvent } from '../../app/shortcuts';
-import { useTimelineView, MIME_ASSETS, MIME_EFFECT, MIME_TRANSITION, MIME_TEMPLATE } from './timelineState';
+import { useTimelineView, MIME_ASSETS, MIME_EFFECT, MIME_TRANSITION, MIME_TEMPLATE, MIME_SOURCE } from './timelineState';
 import { ClipView, dbToPos, posToDb } from './ClipView';
 import { TrackHeader } from './TrackHeader';
 import { Ruler } from './Ruler';
@@ -753,15 +753,16 @@ export function TimelinePanel() {
         for (const id of ext.ids) {
           const a = findAsset(project, id);
           if (!a) continue;
-          const dur = E.assetDurationFrames(a, fps, project.settings.defaultStillDuration) - (a.srcIn ? Math.round(a.srcIn * fps) : 0) - (a.srcOut != null && a.duration ? Math.round((a.duration - a.srcOut) * fps) : 0);
+          const dur = E.placedDurationFrames(a, fps, project.settings.defaultStillDuration);
           const trackFor = (kind: 'video' | 'audio') => {
             if (row.track.kind === kind) return row.track.id;
             const partner = kind === 'video' ? seq.tracks.find((t) => t.kind === 'video' && t.targeted) ?? seq.tracks.find((t) => t.kind === 'video') : seq.tracks.find((t) => t.kind === 'audio' && t.targeted) ?? seq.tracks.find((t) => t.kind === 'audio');
             return partner?.id ?? null;
           };
-          const wantV = a.hasVideo || a.kind === 'image' || a.kind === 'generator' || a.kind === 'sequence';
+          const part = ext.part ?? 'composite';
+          const wantV = (a.hasVideo || a.kind === 'image' || a.kind === 'generator' || a.kind === 'sequence') && part !== 'audio';
           const vt = wantV ? trackFor('video') : null;
-          const at = a.hasAudio ? trackFor('audio') : null;
+          const at = a.hasAudio && part !== 'video' ? trackFor('audio') : null;
           if (vt) ghosts.push({ track: vt, start: cursor, duration: Math.max(1, dur), label: a.name });
           if (at) ghosts.push({ track: at, start: cursor, duration: Math.max(1, dur), label: a.name });
           cursor += Math.max(1, dur);
@@ -795,6 +796,9 @@ export function TimelinePanel() {
     onDragLeave();
     if (!kind || !seq) return;
     e.preventDefault();
+    // Read the drag payload before anything async or state-driven clears it.
+    const ext = useTimelineView.getState().externalDrag;
+    view.setExternalDrag(null);
     const r = lanesRef.current!.getBoundingClientRect();
     const px = e.clientX - r.left,
       py = e.clientY - r.top;
@@ -807,6 +811,15 @@ export function TimelinePanel() {
       const ids = JSON.parse(e.dataTransfer.getData(MIME_ASSETS)) as Id[];
       const assets = ids.map((id) => findAsset(project, id)).filter(Boolean) as MediaAsset[];
       if (!assets.length || !row) return;
+      // Source Monitor drag handles carry which stream was grabbed (video-only / audio-only).
+      let srcPart: 'composite' | 'video' | 'audio' = ext?.kind === 'asset' ? ext.part ?? 'composite' : 'composite';
+      try {
+        const raw = e.dataTransfer.getData(MIME_SOURCE);
+        if (raw) srcPart = (JSON.parse(raw) as { part?: typeof srcPart }).part ?? srcPart;
+      } catch {
+        /* not from the source monitor */
+      }
+      const take: 'both' | 'video' | 'audio' = e.altKey ? (row.track.kind === 'audio' ? 'audio' : 'video') : srcPart === 'composite' ? 'both' : srcPart;
       let cursor = f;
       const created: Id[] = [];
       useProject.getState().update('Add to timeline', (p) => {
@@ -815,7 +828,7 @@ export function TimelinePanel() {
           if (a.kind === 'sequence' && a.sequenceId === seq.id) continue;
           const vTrack = row.track.kind === 'video' ? row.track.id : undefined;
           const aTrack = row.track.kind === 'audio' ? row.track.id : undefined;
-          const out = E.placeAsset(p, sq, a, cursor, { mode: insert ? 'insert' : 'overwrite', videoTrackId: vTrack, audioTrackId: aTrack, srcIn: a.srcIn, srcOut: a.srcOut, take: e.altKey ? (row.track.kind === 'audio' ? 'audio' : 'video') : 'both' });
+          const out = E.placeAsset(p, sq, a, cursor, { mode: insert ? 'insert' : 'overwrite', videoTrackId: vTrack, audioTrackId: aTrack, srcIn: a.srcIn, srcOut: a.srcOut, take });
           created.push(...out);
           const c = sq.clips.find((x) => x.id === out[0]);
           if (c) cursor = c.start + c.duration;

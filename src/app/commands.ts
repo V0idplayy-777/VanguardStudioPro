@@ -14,6 +14,7 @@ import { AUDIO_EFFECT_MAP } from '../engine/effects/audioRegistry';
 import { TRANSITION_MAP } from '../engine/effects/transitions';
 import { param } from '../types/project';
 import { parseSRT, parseVTT } from '../engine/captions/subtitles';
+import { blankTextDocument } from '../ui/graphics/templates';
 
 /* ---------- helpers ---------- */
 
@@ -844,6 +845,8 @@ export const cmd = {
       createdAt: Date.now(),
       meta: {},
     };
+    // A graphic without a document renders nothing and has nothing to edit; start with one text layer.
+    if (kind === 'graphic') asset.graphic = blankTextDocument(asset.width ?? 1920, asset.height ?? 1080, name ?? 'Title');
     useProject.getState().update(`New ${asset.name}`, (p) => {
       p.assets.push(asset);
     });

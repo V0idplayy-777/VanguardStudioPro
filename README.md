@@ -15,6 +15,14 @@ npm run preview    # serve the production bundle
 
 Chrome or Edge 120+ is recommended (WebCodecs, File System Access). Firefox and Safari work with the browser-element decode fallback and MediaRecorder export.
 
+## Deploy to GitHub Pages
+
+The build uses relative asset paths, so it runs from a project sub-path such as `https://<user>.github.io/VanguardStudioPro/` without further configuration. `.github/workflows/deploy-pages.yml` builds and publishes `dist/` on every push to `main` (or by hand from the Actions tab via *Run workflow*).
+
+One-time setup: **Settings, Pages, Build and deployment, Source: GitHub Actions**. Leaving it on *Deploy from a branch* serves the raw source tree instead of the build, and the page stays blank.
+
+To host somewhere else, `npm run build` and copy `dist/` to any static file server. No server-side code, no special headers.
+
 ## What is in the box
 
 **Editing**

@@ -59,6 +59,23 @@ export function assetDurationFrames(asset: MediaAsset | undefined, fps: number, 
   return Math.max(1, Math.round((asset.duration ?? 5) * fps));
 }
 
+/**
+ * Frames a clip made from `asset` will occupy once placed, honouring source In/Out marks.
+ * Stills and generators fall back to the default still duration when no marks are set.
+ */
+export function placedDurationFrames(asset: MediaAsset, fps: number, stillFrames: number, srcIn?: number, srcOut?: number): number {
+  const isStill = asset.kind === 'image' || asset.kind === 'generator';
+  const inS = srcIn ?? asset.srcIn;
+  const outS = srcOut ?? asset.srcOut;
+  if (isStill) {
+    if (inS == null && outS == null) return stillFrames;
+    const total = asset.duration ?? stillFrames / fps;
+    return Math.max(1, Math.round(((outS ?? total) - (inS ?? 0)) * fps));
+  }
+  const total = asset.duration ?? 5;
+  return Math.max(1, Math.round(((outS ?? total) - (inS ?? 0)) * fps));
+}
+
 export function overlapping(seq: Sequence, trackId: Id, start: number, end: number, exclude: Set<Id> = new Set()): Clip[] {
   return seq.clips.filter((c) => c.trackId === trackId && !exclude.has(c.id) && c.start < end && clipEnd(c) > start);
 }
@@ -219,8 +236,7 @@ export function placeAsset(project: Project, seq: Sequence, asset: MediaAsset, f
   const fps = seq.settings.fps;
   const stillFrames = opts.stillFrames ?? project.settings.defaultStillDuration;
   const srcIn = opts.srcIn ?? asset.srcIn ?? 0;
-  const srcOut = opts.srcOut ?? asset.srcOut ?? asset.duration ?? undefined;
-  const totalFrames = asset.kind === 'image' || asset.kind === 'generator' ? stillFrames : Math.max(1, Math.round(((srcOut ?? asset.duration ?? 5) - srcIn) * fps));
+  const totalFrames = placedDurationFrames(asset, fps, stillFrames, opts.srcIn, opts.srcOut);
   const take = opts.take ?? 'both';
   const wantVideo = (asset.hasVideo || asset.kind === 'image' || asset.kind === 'generator' || asset.kind === 'sequence') && take !== 'audio';
   const wantAudio = asset.hasAudio && take !== 'video';
