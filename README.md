@@ -15,6 +15,16 @@ npm run preview    # serve the production bundle
 
 Chrome or Edge 120+ is recommended (WebCodecs, File System Access). Firefox and Safari work with the browser-element decode fallback and MediaRecorder export.
 
+## Deploy to GitHub Pages
+
+The app is a static bundle with no server-side code and no special headers, so GitHub Pages can host it directly. The production build uses relative asset paths, which means it works from a project sub-path such as `https://<user>.github.io/VanguardStudioPro/` as well as from a domain root or a custom domain, without any repo-specific configuration.
+
+`.github/workflows/deploy-pages.yml` builds the app and publishes `dist/` on every push to `main`. It can also be run by hand from the Actions tab via *Run workflow*.
+
+One-time setup: **Settings → Pages → Build and deployment → Source: GitHub Actions**. Leaving it on *Deploy from a branch* publishes the raw source tree instead of the build; `index.html` then points at `/src/main.tsx`, which only the Vite dev server can serve, and the page stays blank.
+
+To host somewhere else, run `npm run build` and copy `dist/` to any static file server.
+
 ## What is in the box
 
 **Editing**
