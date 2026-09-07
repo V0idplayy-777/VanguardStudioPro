@@ -1,0 +1,86 @@
+/*
+  Vanguard Studio Pro - design tokens
+
+  Dark workspace rules of thumb used throughout:
+  - Light text on dark reads heavier than it is, so body copy sits at weight 380
+    (Inter is a variable font) rather than 500.
+  - Never pure white. The brightest text in the app is #e0e0e0.
+  - Base type is 12px in dense panels, 13/14px in the global menu bar, 10px on
+    tiny rulers, sliders, dB scales and clip badges.
+  - No gradients anywhere. Surfaces are flat and separated by 1px seams.
+*/
+:root {
+  --font-ui: 'Inter Variable', 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'Inter Variable', 'Inter', system-ui, sans-serif;
+
+  --fs-tiny: 10px;
+  --fs-base: 12px;
+  --fs-menu: 13px;
+  --fs-window: 14px;
+
+  --fw-light: 330;
+  --fw-body: 380;
+  --fw-label: 400;
+  --fw-strong: 460;
+
+  /* surfaces */
+  --c-app: #141414;
+  --c-seam: #0b0b0b;
+  --c-panel: #1e1e1e;
+  --c-panel-header: #242424;
+  --c-panel-alt: #1a1a1a;
+  --c-elevated: #292929;
+  --c-input: #121212;
+  --c-hover: #2c2c2c;
+  --c-active: #353535;
+  --c-line: #2f2f2f;
+  --c-line-strong: #3d3d3d;
+  --c-line-faint: #262626;
+
+  /* text */
+  --c-text: #c5c5c5;
+  --c-text-bright: #e0e0e0;
+  --c-text-dim: #8d8d8d;
+  --c-text-faint: #5f5f5f;
+  --c-text-disabled: #4a4a4a;
+
+  /* semantic */
+  --c-accent: #3d7bd9;
+  --c-accent-dim: #2c5aa0;
+  --c-accent-text: #7fabf0;
+  --c-selection: #3d7bd9;
+  --c-focus: #5a90e0;
+  --c-warn: #d9a441;
+  --c-error: #c9463d;
+  --c-ok: #4da58a;
+  --c-keyframe: #d9a441;
+  --c-playhead: #3d7bd9;
+  --c-playhead-line: #5a90e0;
+  --c-in-out: rgba(61, 123, 217, 0.18);
+  --c-marker: #4da58a;
+
+  /* timeline clip families */
+  --c-clip-video: #3b5a80;
+  --c-clip-video-head: #4d7099;
+  --c-clip-audio: #3f6b52;
+  --c-clip-audio-head: #4f8264;
+  --c-clip-image: #6b5a3a;
+  --c-clip-image-head: #82704b;
+  --c-clip-title: #6c4a7d;
+  --c-clip-title-head: #855d99;
+  --c-clip-adjust: #575757;
+  --c-clip-adjust-head: #6b6b6b;
+  --c-clip-nested: #7a5a3a;
+  --c-clip-nested-head: #946f4a;
+
+  --radius: 2px;
+  --radius-lg: 3px;
+
+  --h-panel-header: 26px;
+  --h-toolbar: 30px;
+  --h-row: 22px;
+  --h-menubar: 30px;
+
+  --shadow-popover: 0 6px 18px rgba(0, 0, 0, 0.55), 0 0 0 1px #0b0b0b;
+  --shadow-dialog: 0 18px 50px rgba(0, 0, 0, 0.7), 0 0 0 1px #0b0b0b;
+}

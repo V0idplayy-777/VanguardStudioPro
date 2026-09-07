@@ -1,0 +1,71 @@
+name: Deploy to GitHub Pages
+
+# Builds the Vite app and publishes ./dist to GitHub Pages.
+#
+# Vanguard Studio Pro is a pure static bundle (no server code, no special
+# headers), so Pages can host it as-is. What Pages must NOT do is serve the raw
+# source tree: index.html points at /src/main.tsx, which only the Vite dev
+# server understands. That is why this workflow runs `npm run build` and
+# publishes the output instead of the repository contents.
+#
+# One-time repository setup (needed once, by a repo admin):
+#   Settings -> Pages -> Build and deployment -> Source: "GitHub Actions"
+# With the default "Deploy from a branch" setting the raw source tree is
+# published and the page stays blank, so this has to be switched by hand.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one deployment at a time; a newer push cancels an in-flight one.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Type-checks and produces dist/. The Vite base is './', so the bundle is
+      # location-independent and needs no repo-specific path baked in.
+      - name: Build
+        run: npm run build
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v6
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: dist
+          # Keep dist/.nojekyll (dotfiles are stripped by default).
+          include-hidden-files: true
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
