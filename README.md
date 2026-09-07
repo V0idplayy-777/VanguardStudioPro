@@ -30,7 +30,7 @@ To host somewhere else, run `npm run build` and copy `dist/` to any static file 
 **Editing**
 - Dockable workspace: drag tabs between groups, split, float, maximise (backtick), nine preset workspaces plus your own saved layouts.
 - Timeline with unlimited video and audio tracks, insert/overwrite, three-point editing from the Source monitor, lift/extract, ripple/rolling/slip/slide/rate-stretch tools, razor, snapping, track targeting, sync lock, linked selection, grouping, nesting, gap closing, clip markers.
-- Frame-accurate transport: J/K/L shuttle, loop, In/Out, sequence markers, chapter markers, timecode/frames/seconds display, drop-frame timecode.
+- Frame-accurate transport: J/K/L shuttle, loop, In/Out, sequence markers, chapter markers, timecode/frames/seconds display, drop-frame timecode. Playback is flicker-free: render jobs are serialized and each finished frame is presented from a private snapshot, so thumbnails, source-monitor and export renders can never blank or tear the Program Monitor.
 - Speed/duration with reverse and pitch preservation, frame hold, time remapping with speed ramps.
 - Full undo history with a browsable History panel.
 
@@ -51,7 +51,19 @@ To host somewhere else, run `npm run build` and copy `dist/` to any static file 
 
 **Media and project**
 - Import by drag and drop or the Media Browser (local folders). Thumbnails, waveforms, metadata, bins, search, labels, interpret footage, scene edit detection.
+- Capture straight into the project: **Record Voiceover** (microphone to an audio track at the playhead, with count-in and a live level meter while the timeline rolls), **Record Screen** and **Record Webcam** with live preview.
+- **Beat detection**: analyse any music clip, drop beat markers on the timeline and cut to the rhythm - snapping locks to them automatically.
 - Autosave to IndexedDB, media cache for reload, `.vsproj` project files with optional embedded media, relink missing media.
+
+**Colour**
+- **Auto Color**: one-click level and white-balance fix per clip (Lumetri panel or Clip menu) - analyses the frame and writes conservative Basic Correction values.
+
+**Find anything**
+- **Command palette** (`Ctrl+Shift+P`): fuzzy-search every command, panel, effect, asset, sequence and setting, and run it from the keyboard.
+
+**Settings**
+- Categorized, searchable settings (`Ctrl+,`): General, Appearance (scale, accent color, brightness), Timeline, Playback, Audio, Accessibility (reduce motion, high contrast, larger text, strong focus rings, disable flashing effects), Performance (thumbnails, decode cache, FPS overlay), Auto Save and Experimental (half-float pipeline, snapshot presentation, low-latency canvas). Everything applies live and persists per browser.
+
 
 **Export**
 - H.264, HEVC, VP9, AV1 in MP4/MOV/WebM/MKV via WebCodecs; GIF; PNG/JPEG/WebP image sequences; WAV; EDL, marker CSV, YouTube chapters, single frame export.

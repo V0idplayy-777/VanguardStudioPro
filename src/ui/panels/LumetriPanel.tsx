@@ -113,6 +113,7 @@ export function LumetriPanel() {
       <div className="toolbar">
         <span style={{ color: 'var(--c-text-bright)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{clip.name}</span>
         <span className="spacer" />
+        <Button sm icon="autoColor" onClick={() => void cmd.autoColorSelection()} title="Analyze this frame and fix levels and white balance in one click">Auto</Button>
         <Checkbox checked={enabled} onChange={(v) => useProject.getState().update('Toggle Lumetri', (p) => { const c = p.sequences.find((x) => x.id === seq.id)!.clips.find((x) => x.id === clip.id); const fx = c?.effects.find((e) => e.type === LUMETRI); if (fx) fx.enabled = v; })} label="fx" title="Bypass Lumetri" disabled={!lum} />
         <IconButton icon="effectFx" label="Open in Effect Controls" sm onClick={() => useUI.getState().setFocusedPanel('effectControls')} />
       </div>

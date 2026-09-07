@@ -6,6 +6,7 @@ import { getActiveSequence, sequenceDuration, useProject } from '../../state/pro
 import { useUI, logEvent } from '../../state/uiStore';
 import type { Project, Sequence } from '../../types/project';
 import { onMediaChange } from '../media/mediaStore';
+import { settings } from '../../state/settingsStore';
 
 /*
   Playback controller. Owns:
@@ -55,8 +56,11 @@ let lastRenderedQuality = '';
 let fpsAcc = 0;
 let fpsCount = 0;
 let fpsTime = 0;
+let retryTimer: number | null = null;
 let lastMediaVersion = 0;
 let mediaVersion = 0;
+/** Canvases that have already shown a frame; used to never wipe a good frame. */
+const presentedCanvases = new WeakSet<HTMLCanvasElement>();
 onMediaChange(() => {
   mediaVersion++;
 });
@@ -199,7 +203,10 @@ function tick(now: number) {
       rafId = requestAnimationFrame(tick);
       return;
     }
-    usePlayback.setState({ playhead: Math.max(dur, 0) });
+    // Park on the last frame that actually has content (frame == dur is the
+    // empty frame past the end and would flash black).
+    const endFrame = settings().parkOnLastFrame ? Math.max(dur - 1, 0) : Math.max(dur, 0);
+    usePlayback.setState({ playhead: endFrame, droppedFrames: st.droppedFrames + (frame > st.playhead + 2 ? 1 : 0) });
     st.pause();
     return;
   }
@@ -208,7 +215,13 @@ function tick(now: number) {
     st.pause();
     return;
   }
-  if (frame !== st.playhead) usePlayback.setState({ playhead: frame });
+  if (frame !== st.playhead) {
+    if (st.playing && Math.abs(frame - st.playhead) > 2) {
+      usePlayback.setState({ playhead: frame, droppedFrames: st.droppedFrames + 1 });
+    } else {
+      usePlayback.setState({ playhead: frame });
+    }
+  }
   scheduleRender();
   rafId = requestAnimationFrame(tick);
 }
@@ -256,20 +269,23 @@ async function renderNow() {
   const t0 = performance.now();
   try {
     const comp = getCompositor();
-    if (lastRT) {
-      comp.release(lastRT);
-      lastRT = null;
-    }
-    comp.releaseAll();
     let scale = quality === 'half' ? 2 : quality === 'quarter' ? 4 : 1;
     // During fast playback drop to half to keep up
-    if (st.playing && scale === 1 && st.renderMs > 1000 / seq.settings.fps * 0.9) scale = 2;
+    if (st.playing && scale === 1 && settings().autoQualityDrop && st.renderMs > (1000 / seq.settings.fps) * 0.9) scale = 2;
     const rt = await comp.renderFrame(project, seq, st.playhead, { scale, captions: true });
-    lastRT = rt;
+    // Snapshot the finished frame into a private target immediately (this is
+    // synchronous, so nothing can reuse the render target in between). The
+    // monitors present from the snapshot, which makes them immune to
+    // concurrent thumbnail / source / export renders reusing pool targets.
+    const snap = settings().snapshotPresentation ? comp.clone(rt) : rt;
+    if (snap !== rt) comp.release(rt);
+    const prev = lastRT;
+    lastRT = snap;
     lastRenderedFrame = st.playhead;
     lastRenderedRev = project.revision;
     lastRenderedQuality = key;
     lastMediaVersion = mediaVersion;
+    if (prev) comp.release(prev);
     const ms = performance.now() - t0;
     fpsAcc += ms;
     fpsCount++;
@@ -279,9 +295,17 @@ async function renderNow() {
       fpsCount = 0;
       fpsTime = performance.now();
     }
-    if (comp.lastFrameIncomplete && !st.playing) {
-      // media still decoding: retry shortly
-      window.setTimeout(() => scheduleRender(true), 120);
+    if (comp.lastFrameIncomplete) {
+      // Media still decoding: retry shortly, during playback as well, so the
+      // first decodable frame replaces the stale one instead of leaving a gap.
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
+      retryTimer = window.setTimeout(
+        () => {
+          retryTimer = null;
+          scheduleRender(true);
+        },
+        st.playing ? 90 : 120,
+      );
     }
     usePlayback.setState({ frameVersion: usePlayback.getState().frameVersion + 1 });
   } catch (e: any) {
@@ -315,10 +339,17 @@ export function presentTo(canvas: HTMLCanvasElement, opts: { channel?: number; c
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
   if (!lastRT) {
-    ctx.fillStyle = '#000';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    // No frame rendered yet. Only paint the initial black once per canvas;
+    // while a render is in flight we keep the last good frame on screen
+    // instead of flashing black.
+    if (!presentedCanvases.has(canvas)) {
+      presentedCanvases.add(canvas);
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
     return;
   }
+  presentedCanvases.add(canvas);
   const src = comp.canvas as HTMLCanvasElement;
   if (src.width !== lastRT.width || src.height !== lastRT.height) {
     src.width = lastRT.width;

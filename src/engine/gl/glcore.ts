@@ -2,6 +2,8 @@
   Thin WebGL2 helpers: program cache, framebuffer pool, fullscreen quad.
 */
 
+import { useSettings } from '../../state/settingsStore';
+
 export const VERT_SRC = `#version 300 es
 precision highp float;
 in vec2 a_pos;
@@ -126,7 +128,7 @@ export class GLCore {
     const gl = this.gl;
     const tex = gl.createTexture()!;
     gl.bindTexture(gl.TEXTURE_2D, tex);
-    if (this.floatTextures) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, width, height, 0, gl.RGBA, gl.HALF_FLOAT, null);
+    if (this.floatTextures && useSettings.getState().floatPipeline) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, width, height, 0, gl.RGBA, gl.HALF_FLOAT, null);
     else gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);

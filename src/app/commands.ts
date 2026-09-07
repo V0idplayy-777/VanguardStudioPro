@@ -14,6 +14,8 @@ import { AUDIO_EFFECT_MAP } from '../engine/effects/audioRegistry';
 import { TRANSITION_MAP } from '../engine/effects/transitions';
 import { param } from '../types/project';
 import { parseSRT, parseVTT } from '../engine/captions/subtitles';
+import { analyzeClipFrame, autoColorParamsFrom } from '../engine/color/autoColor';
+import { useSettings } from '../state/settingsStore';
 
 /* ---------- helpers ---------- */
 
@@ -809,7 +811,7 @@ export const cmd = {
   },
   async autosave() {
     await autosaveNow();
-    toast('info', 'Autosaved', 'Project snapshot stored in browser storage.');
+    if (useSettings.getState().verboseToasts) toast('info', 'Autosaved', 'Project snapshot stored in browser storage.');
   },
   /* project panel */
   newBin(name = 'New Bin') {
@@ -907,8 +909,11 @@ export const cmd = {
     });
   },
   addClipsToSequenceAtPlayhead(assets: MediaAsset[], mode: 'insert' | 'overwrite') {
-    const ph = playheadNow();
-    let cursor = ph;
+    cmd.placeAssetsAt(assets, playheadNow(), mode);
+  },
+  /** Place assets beginning at an explicit frame (used by capture features). */
+  placeAssetsAt(assets: MediaAsset[], frame: number, mode: 'insert' | 'overwrite' = 'overwrite') {
+    let cursor = Math.max(0, frame);
     let ids: Id[] = [];
     mutateSeq('Add to timeline', (seq, p) => {
       for (const a of assets) {
@@ -919,6 +924,65 @@ export const cmd = {
       }
     });
     if (ids.length) useUI.getState().selectClips(ids);
+  },
+
+  /* color */
+  /** One-click Auto Color on the selection (or the clip under the playhead). */
+  async autoColorSelection(strength = 1) {
+    const project = useProject.getState().project;
+    const seq = seqNow();
+    if (!seq) return toast('warning', 'No sequence', 'Open a sequence, select a clip and run Auto Color again.');
+    let clips = selectedClips().filter((c) => c.effects !== undefined && seq.tracks.find((t) => t.id === c.trackId)?.kind === 'video');
+    if (!clips.length) {
+      const ph = playheadNow();
+      clips = seq.clips.filter((c) => seq.tracks.find((t) => t.id === c.trackId)?.kind === 'video' && ph >= c.start && ph < E.clipEnd(c));
+    }
+    if (!clips.length) return toast('info', 'Nothing to color', 'Select a video clip (or park the playhead over one) and try again.');
+    let done = 0;
+    let params: import('../engine/color/autoColor').AutoColorParams | null = null;
+    useProject.getState().beginBatch('Auto color');
+    for (const clip of clips) {
+      const live = useProject.getState().project.sequences.find((s) => s.id === seq.id)!.clips.find((c) => c.id === clip.id)!;
+      const frame = Math.min(E.clipEnd(live) - 1, Math.max(live.start, playheadNow()));
+      const stats = await analyzeClipFrame(useProject.getState().project, seq, live, frame);
+      if (!stats) continue;
+      const p2 = autoColorParamsFrom(stats, strength);
+      params = p2;
+      useProject.getState().updateTransient((p) => {
+        const s = p.sequences.find((x) => x.id === seq.id);
+        const c = s?.clips.find((x) => x.id === live.id);
+        if (!c) return;
+        let fx = c.effects.find((e) => e.type === 'lumetri');
+        if (!fx) {
+          const d = getEffectDef('lumetri')!;
+          const defaults: Record<string, Param> = {};
+          for (const pd of d.params) defaults[pd.key] = param(pd.default);
+          fx = { id: uid('fx'), type: 'lumetri', enabled: true, params: defaults, masks: [] };
+          c.effects.push(fx);
+        }
+        const setVal = (key: string, v: number) => {
+          const cur = fx!.params[key];
+          if (cur && !cur.animated) fx!.params[key] = { ...cur, value: v };
+          else if (!cur) fx!.params[key] = param(v);
+        };
+        setVal('exposure', p2.exposure);
+        setVal('contrast', p2.contrast);
+        setVal('blacks', p2.blacks);
+        setVal('whites', p2.whites);
+        setVal('temperature', p2.temperature);
+        setVal('tint', p2.tint);
+        setVal('saturation', p2.saturation);
+      });
+      done++;
+    }
+    if (done) {
+      // One undoable step for the whole batch.
+      useProject.getState().endBatch();
+      toast('success', `Auto Color applied to ${done} clip${done === 1 ? '' : 's'}`, params ? `Exposure ${params.exposure > 0 ? '+' : ''}${params.exposure.toFixed(1)}, temperature ${params.temperature > 0 ? '+' : ''}${params.temperature.toFixed(0)}` : undefined);
+    } else {
+      useProject.getState().cancelBatch();
+      toast('warning', 'Auto Color', 'Could not read a frame from the selection.');
+    }
   },
 };
 

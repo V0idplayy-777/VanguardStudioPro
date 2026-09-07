@@ -12,6 +12,7 @@ import { MIME_ASSETS, useTimelineView } from '../timeline/timelineState';
 import * as E from '../../engine/timeline/edits';
 import { importFiles } from '../../engine/media/importer';
 import { renderGraphic, layerBounds } from '../../engine/graphics/graphicRenderer';
+import { useSettings } from '../../state/settingsStore';
 
 const CHANNEL_INDEX: Record<string, number> = { rgb: 0, alpha: 1, r: 2, g: 3, b: 4, luma: 5 };
 
@@ -27,6 +28,8 @@ export function ProgramMonitor() {
   const renderMs = usePlayback((s) => s.renderMs);
   const pb = usePlayback;
   const ui = useUI();
+  const dropped = usePlayback((s) => s.droppedFrames);
+  const showPerf = useSettings((s) => s.showFpsOverlay);
   const [wrapRef, size] = useElementSize<HTMLDivElement>();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
@@ -279,11 +282,18 @@ export function ProgramMonitor() {
           { label: `Render ${renderMs.toFixed(1)} ms / frame`, disabled: true },
         ]} />
       </div>
-      <div ref={wrapRef} className={`viewport ${dragOver ? 'dragover' : ''}`} onDragOver={onDragOver} onDragLeave={() => setDragOver(null)} onDrop={onDrop} onPointerDown={onViewportDown}>
+      <div ref={wrapRef} className={`viewport ${dragOver ? 'dragover' : ''}`} onDragOver={onDragOver} onDragLeave={() => setDragOver(null)} onDrop={onDrop} onPointerDown={onViewportDown} onDoubleClick={(e) => { if (e.target === e.currentTarget) { if (document.fullscreenElement) void document.exitFullscreen(); else void e.currentTarget.requestFullscreen?.(); } }}>
         {seq ? (
           <>
             <canvas ref={canvasRef} style={{ left: geom.x, top: geom.y, width: geom.w, height: geom.h }} />
             <canvas ref={overlayRef} className="overlay-svg" style={{ left: geom.x, top: geom.y, width: geom.w, height: geom.h }} />
+            {showPerf ? (
+              <div className="perf-hud" title="Live render statistics (Settings, Performance)">
+                <span>{playing ? `${fpsActual.toFixed(0)} fps` : 'idle'}</span>
+                <span className={renderMs > 1000 / fps * 0.8 ? 'bad' : ''}>{renderMs.toFixed(1)} ms</span>
+                <span className={dropped > 0 ? 'bad' : ''}>{dropped} dropped</span>
+              </div>
+            ) : null}
             {!hasContent && !dragOver ? (
               <div className="empty-mon" style={{ position: 'absolute' }}>
                 <div className="big">{seq.name}</div>

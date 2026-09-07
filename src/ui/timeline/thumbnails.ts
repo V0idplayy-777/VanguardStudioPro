@@ -1,6 +1,7 @@
 import type { Clip, MediaAsset } from '../../types/project';
 import { getMedia } from '../../engine/media/mediaStore';
 import { renderGraphic } from '../../engine/graphics/graphicRenderer';
+import { settings } from '../../state/settingsStore';
 
 /**
  * Small LRU cache of thumbnail bitmaps used by timeline clips, the project
@@ -32,8 +33,20 @@ export function invalidateThumbnails(assetId?: string) {
 }
 
 export async function thumbnailFor(clip: Clip, asset: MediaAsset | undefined, srcTime: number, w: number, h: number): Promise<ImageBitmap | HTMLCanvasElement | null> {
+  const quality = settings().thumbnailQuality;
+  if (quality === 'off') {
+    // Cheap placeholder instead of decoded frames.
+    const c = document.createElement('canvas');
+    c.width = 2;
+    c.height = 2;
+    const cx = c.getContext('2d')!;
+    cx.fillStyle = '#262626';
+    cx.fillRect(0, 0, 2, 2);
+    return c;
+  }
   const q = Math.max(0, Math.round(srcTime * 2) / 2);
-  const bucketH = h <= 32 ? 32 : h <= 64 ? 64 : 128;
+  let bucketH = h <= 32 ? 32 : h <= 64 ? 64 : 128;
+  if (quality === 'low') bucketH = Math.min(bucketH, 32);
   const key = `${clip.assetId ?? clip.generator ?? clip.nestedSequenceId ?? 'x'}|${q}|${bucketH}|${clip.generator === 'graphic' ? hashDoc(clip) : ''}`;
   const hit = cache.get(key);
   if (hit) return hit;

@@ -9,6 +9,7 @@ import { getMedia } from '../media/mediaStore';
 import { clipEnd, sourceTimeAt, transitionAtCut, transitionRange } from '../timeline/edits';
 import { renderCaption, renderGraphic } from '../graphics/graphicRenderer';
 import { hexToRgb } from '../util';
+import { settings } from '../../state/settingsStore';
 
 /*
   Frame compositor.
@@ -38,6 +39,9 @@ export interface RenderOptions {
 
 const blendIndex: Record<BlendMode, number> = Object.fromEntries(BLEND_MODES.map((b, i) => [b.id, i])) as any;
 
+/** Effects that strobe or flash - blocked by the accessibility setting. */
+const FLASHING_EFFECTS = new Set(['strobe']);
+
 interface TexCacheEntry {
   tex: WebGLTexture;
   key: string;
@@ -63,10 +67,13 @@ export class Compositor {
   lastFrameIncomplete = false;
   onShaderError?: (msg: string) => void;
   private badPrograms = new Set<string>();
+  /** Serializes renders: program monitor, source monitor, thumbnails and export
+   *  all share one GL context, so their frame jobs must not interleave. */
+  private renderQueue: Promise<unknown> = Promise.resolve();
 
   constructor(canvas: HTMLCanvasElement | OffscreenCanvas) {
     this.canvas = canvas;
-    const gl = canvas.getContext('webgl2', { premultipliedAlpha: true, alpha: false, antialias: false, preserveDrawingBuffer: true, desynchronized: true }) as WebGL2RenderingContext | null;
+    const gl = canvas.getContext('webgl2', { premultipliedAlpha: true, alpha: false, antialias: false, preserveDrawingBuffer: true, desynchronized: settings().desyncCanvas }) as WebGL2RenderingContext | null;
     if (!gl) throw new Error('WebGL2 is required');
     this.gl = gl;
     this.core = new GLCore(gl);
@@ -209,6 +216,13 @@ export class Compositor {
         this.lastFrameIncomplete = true;
         const stale = this.texCache.get('asset:' + asset.id);
         if (stale) return { tex: stale.tex, width: stale.width, height: stale.height };
+        // Element-based sources keep showing their previous frame while a
+        // seek settles - presenting it avoids a black flash between decodes.
+        const el = src.element;
+        if (el && el.readyState >= 2 && el.videoWidth > 0) {
+          const tex = this.cacheTexture('element:warm', 'asset:' + asset.id, (t) => this.core.upload(t, el), el.videoWidth, el.videoHeight);
+          return { tex, width: el.videoWidth, height: el.videoHeight };
+        }
         return null;
       }
       const key = src.kind === 'element' ? `t${Math.round(srcTime * 1000)}` : `t${Math.round(srcTime * 1000)}`;
@@ -306,6 +320,8 @@ export class Compositor {
       if (!fx.enabled) continue;
       const def = EFFECT_MAP[fx.type];
       if (!def || def.audio) continue;
+      // Photosensitivity: strobe-style effects can be disabled globally.
+      if (FLASHING_EFFECTS.has(fx.type) && settings().disableFlashingEffects) continue;
       const orig = cur;
       let src = cur;
       let lastOut: RenderTarget | null = null;
@@ -480,7 +496,36 @@ export class Compositor {
 
   /* ---------- main entry ---------- */
 
-  async renderFrame(project: Project, seq: Sequence, frame: number, opts: RenderOptions = {}): Promise<RenderTarget> {
+  /**
+   * Render a frame. Jobs are serialized on one queue because there is a single
+   * GL context: the program monitor, source monitor, thumbnails and the
+   * exporter all come through here and must not interleave GL work across
+   * their internal awaits. Nested renders (sequences inside sequences) run
+   * inline within the owning job and bypass the queue.
+   */
+  renderFrame(project: Project, seq: Sequence, frame: number, opts: RenderOptions = {}): Promise<RenderTarget> {
+    if (this.insideRender) return this.renderFrameInner(project, seq, frame, opts);
+    const job = this.renderQueue.then(() => this.renderFrameInner(project, seq, frame, opts));
+    this.renderQueue = job.then(
+      () => {},
+      () => {},
+    );
+    return job;
+  }
+
+  private insideRender = false;
+
+  private async renderFrameInner(project: Project, seq: Sequence, frame: number, opts: RenderOptions = {}): Promise<RenderTarget> {
+    const wasInside = this.insideRender;
+    this.insideRender = true;
+    try {
+      return await this.renderFrameBody(project, seq, frame, opts);
+    } finally {
+      this.insideRender = wasInside;
+    }
+  }
+
+  private async renderFrameBody(project: Project, seq: Sequence, frame: number, opts: RenderOptions = {}): Promise<RenderTarget> {
     this.frameCounter++;
     if ((opts.depth ?? 0) === 0) this.lastFrameIncomplete = false;
     const scale = opts.scale ?? 1;
@@ -634,6 +679,21 @@ export class Compositor {
   }
 
   /* ---------- present ---------- */
+
+  /** Copy a render target into a private target (synchronous, no awaits).
+   *  Used by playback to snapshot finished frames so monitors never present
+   *  memory that a later render has already reused. */
+  clone(rt: RenderTarget): RenderTarget {
+    const out = this.core.acquire(rt.width, rt.height);
+    this.core.bindTarget(out);
+    const prog = this.core.program('copy', COPY_FRAG);
+    this.gl.useProgram(prog);
+    this.core.bindTex(0, rt.tex);
+    this.core.setInt(prog, 'u_tex', 0);
+    this.core.setUniform(prog, 'u_flipY', 0);
+    this.core.drawQuad();
+    return out;
+  }
 
   /** Draw a render target to the canvas (default framebuffer). */
   present(rt: RenderTarget, opts: { bg?: [number, number, number]; channel?: number; checker?: boolean; viewport?: { x: number; y: number; w: number; h: number } } = {}) {

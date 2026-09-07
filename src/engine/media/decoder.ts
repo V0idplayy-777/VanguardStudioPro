@@ -1,5 +1,6 @@
 import { ALL_FORMATS, AudioBufferSink, BlobSource, CanvasSink, Input } from 'mediabunny';
 import type { VideoSource } from './mediaStore';
+import { settings } from '../../state/settingsStore';
 
 /*
   Media decoding.
@@ -121,6 +122,11 @@ export async function decodeAudioBuffer(blob: Blob, ctx: BaseAudioContext): Prom
 }
 
 /** WebCodecs based frame source with small LRU frame cache. */
+function maxDecodeCache() {
+  const s = settings().decodeCacheSize;
+  return typeof s === 'number' ? Math.max(8, Math.min(200, s)) : 48;
+}
+
 export async function createWebCodecsSource(blob: Blob): Promise<VideoSource | null> {
   if (typeof VideoDecoder === 'undefined') return null;
   try {
@@ -176,7 +182,10 @@ export async function createWebCodecsSource(blob: Blob): Promise<VideoSource | n
             if (wrapped && wrapped.timestamp + wrapped.duration > t) break;
           }
         }
-        if (!wrapped || wrapped.timestamp > t + 1 / fps) {
+        // Re-seek when the iterator is beyond t, behind t (e.g. another
+        // consumer seeked it elsewhere), or exhausted.
+        const behind = !wrapped || wrapped.timestamp + (wrapped.duration || 1 / fps) <= t;
+        if (behind || !!(wrapped && wrapped.timestamp > t + 1 / fps)) {
           if (sequential) {
             try {
               await sequential.return(undefined);
@@ -201,7 +210,8 @@ export async function createWebCodecsSource(blob: Blob): Promise<VideoSource | n
         lastCanvas = entry;
         cache.set(Math.round(wrapped.timestamp * fps * 2), entry);
         cache.set(key, entry);
-        if (cache.size > 48) {
+        const maxCache = maxDecodeCache();
+        if (cache.size > maxCache) {
           const first = cache.keys().next().value;
           if (first !== undefined) cache.delete(first);
         }
@@ -257,6 +267,7 @@ export function createElementSource(url: string, duration: number, width: number
     el.onerror = () => res();
   });
   let lastTime = -1;
+  let everHadFrame = false;
   let queue: Promise<any> = Promise.resolve();
   const seekTo = (t: number) =>
     new Promise<void>((res) => {
@@ -284,10 +295,16 @@ export function createElementSource(url: string, duration: number, width: number
       const t = Math.max(0, Math.min(duration - 0.001, time));
       const run = async () => {
         if (Math.abs(t - lastTime) > 0.25 / fps) {
-          await seekTo(t);
           lastTime = t;
+          await seekTo(t);
         }
-        return el.readyState >= 2 ? el : null;
+        if (el.readyState >= 2) {
+          everHadFrame = true;
+          return el;
+        }
+        // While a seek settles the element still displays the previous frame.
+        // Show that instead of returning null, which would flash black.
+        return everHadFrame ? el : null;
       };
       queue = queue.then(run, run);
       return queue;
