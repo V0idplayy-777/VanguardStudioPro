@@ -20,6 +20,8 @@ import { framesToTimecode } from './engine/timecode';
 import { Icon } from './ui/icons';
 import { parseSRT, parseVTT } from './engine/captions/subtitles';
 import { uid } from './engine/util';
+import { useSettings, applyDocumentSettings } from './state/settingsStore';
+import { CommandPalette } from './ui/CommandPalette';
 
 function StatusBar() {
   const seq = useActiveSequence();
@@ -192,6 +194,18 @@ function App() {
   const autoSave = useProject((s) => s.project.settings.autoSaveEnabled);
   const interval = useProject((s) => s.project.settings.autoSaveIntervalMinutes);
 
+  // Application settings: apply theme/a11y on boot and follow changes. The
+  // default program quality also seeds the UI store.
+  useEffect(() => {
+    const s = useSettings.getState();
+    applyDocumentSettings(s);
+    useUI.setState({ programQuality: s.defaultProgramQuality });
+    return useSettings.subscribe((next) => {
+      applyDocumentSettings(next);
+      if (next.defaultProgramQuality !== useUI.getState().programQuality) useUI.setState({ programQuality: next.defaultProgramQuality });
+    });
+  }, []);
+
   // Autosave loop follows the preferences.
   useEffect(() => {
     if (!autoSave) return;
@@ -245,13 +259,14 @@ function App() {
       <ModalHost />
       <ContextMenuHost />
       <ToastHost />
+      <CommandPalette />
       <EggOverlay />
     </div>
   );
 }
 
 // Expose a tiny debug surface for power users (also used by tests). Not a feature; not in menus.
-(window as any).vsp = { cmd, project: useProject, ui: useUI, playback: usePlayback };
+(window as any).vsp = { cmd, project: useProject, ui: useUI, playback: usePlayback, settings: useSettings };
 
 createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

@@ -30,13 +30,16 @@ To host somewhere else, run `npm run build` and copy `dist/` to any static file 
 **Editing**
 - Dockable workspace: drag tabs between groups, split, float, maximise (backtick), nine preset workspaces plus your own saved layouts.
 - Timeline with unlimited video and audio tracks, insert/overwrite, three-point editing from the Source monitor, lift/extract, ripple/rolling/slip/slide/rate-stretch tools, razor, snapping, track targeting, sync lock, linked selection, grouping, nesting, gap closing, clip markers.
-- Frame-accurate transport: J/K/L shuttle, loop, In/Out, sequence markers, chapter markers, timecode/frames/seconds display, drop-frame timecode.
+- **Cut to Beats**: razor every clip on the beat markers (detecting them first when needed) so edits land on the rhythm.
+- **Pan & Zoom (Ken Burns)**: one click writes eased scale/position keyframes - Auto mode gives every photo a different move.
+- Frame-accurate transport: J/K/L shuttle, loop, In/Out, sequence markers, chapter markers, timecode/frames/seconds display, drop-frame timecode. Playback is flicker-free: render jobs are serialized and each finished frame is presented from a private snapshot, so thumbnails, source-monitor and export renders can never blank or tear the Program Monitor. It is also smooth under load: sequential decoding fast-forwards instead of re-seeking, the next frame decodes ahead while the current one renders, thumbnails and scrubbing use a separate decode session, and the playhead glides over coarse audio clocks (long Bluetooth buffers).
 - Speed/duration with reverse and pitch preservation, frame hold, time remapping with speed ramps.
 - Full undo history with a browsable History panel.
 
 **Effects and colour**
 - 60+ GPU video effects (blur, sharpen, keying, distortion, stylise, generate, transitions) with keyframes, bezier easing, masks and track mattes.
 - Lumetri Color: basic correction, creative looks, curves, colour wheels, HSL secondary, vignette, plus scopes (waveform, vectorscope, parade, histogram) and one-click Color Match.
+- **Auto Reframe**: reframe a sequence to 9:16 / 1:1 / 4:5 / 16:9 - every clip is scaled to fill and keyframed to follow the action.
 - Adjustment layers, colour mattes, bars and tone, universal counting leader.
 - Effect presets, saved per browser, importable and exportable.
 
@@ -44,6 +47,8 @@ To host somewhere else, run `npm run build` and copy `dist/` to any static file 
 - Track mixer and clip mixer with faders, pans, mutes, solos, per-track effect inserts, master fader, true-peak and loudness meters.
 - Audio effects: EQ, compressor, limiter, gate, reverb, delay, chorus, de-esser, and more. Auto-ducking writes volume keyframes under dialogue.
 - Rubber-band volume and pan keyframes drawn straight on the clip.
+- **Remove Silence**: detect and cut out silent spans (adaptive noise-floor threshold, adjustable padding) with the gaps rippled closed - linked audio/video cut together, one undo step.
+- **Normalize Audio**: measures integrated LUFS (K-weighted, gated) per clip and trims clip gain to hit -14 LUFS.
 
 **Graphics and captions**
 - Essential Graphics: text, shapes, layer stacks, transforms with keyframes, in/out animations, a template browser.
@@ -51,7 +56,19 @@ To host somewhere else, run `npm run build` and copy `dist/` to any static file 
 
 **Media and project**
 - Import by drag and drop or the Media Browser (local folders). Thumbnails, waveforms, metadata, bins, search, labels, interpret footage, scene edit detection.
+- Capture straight into the project: **Record Voiceover** (microphone to an audio track at the playhead, with count-in and a live level meter while the timeline rolls), **Record Screen** and **Record Webcam** with live preview.
+- **Beat detection**: analyse any music clip, drop beat markers on the timeline and cut to the rhythm - snapping locks to them automatically.
 - Autosave to IndexedDB, media cache for reload, `.vsproj` project files with optional embedded media, relink missing media.
+
+**Colour**
+- **Auto Color**: one-click level and white-balance fix per clip (Lumetri panel or Clip menu) - analyses the frame and writes conservative Basic Correction values.
+
+**Find anything**
+- **Command palette** (`Ctrl+Shift+P`): fuzzy-search every command, panel, effect, asset, sequence and setting, and run it from the keyboard.
+
+**Settings**
+- Categorized, searchable settings (`Ctrl+,`): General, Appearance (scale, accent color, brightness), Timeline, Playback, Audio, Accessibility (reduce motion, high contrast, larger text, strong focus rings, disable flashing effects), Performance (thumbnails, decode cache, FPS overlay), Auto Save and Experimental (half-float pipeline, snapshot presentation, low-latency canvas). Everything applies live and persists per browser.
+
 
 **Export**
 - H.264, HEVC, VP9, AV1 in MP4/MOV/WebM/MKV via WebCodecs; GIF; PNG/JPEG/WebP image sequences; WAV; EDL, marker CSV, YouTube chapters, single frame export.

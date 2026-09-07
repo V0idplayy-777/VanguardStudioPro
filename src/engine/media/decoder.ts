@@ -1,5 +1,6 @@
 import { ALL_FORMATS, AudioBufferSink, BlobSource, CanvasSink, Input } from 'mediabunny';
 import type { VideoSource } from './mediaStore';
+import { settings } from '../../state/settingsStore';
 
 /*
   Media decoding.
@@ -121,6 +122,11 @@ export async function decodeAudioBuffer(blob: Blob, ctx: BaseAudioContext): Prom
 }
 
 /** WebCodecs based frame source with small LRU frame cache. */
+function maxDecodeCache() {
+  const s = settings().decodeCacheSize;
+  return typeof s === 'number' ? Math.max(8, Math.min(200, s)) : 48;
+}
+
 export async function createWebCodecsSource(blob: Blob): Promise<VideoSource | null> {
   if (typeof VideoDecoder === 'undefined') return null;
   try {
@@ -145,11 +151,46 @@ export async function createWebCodecsSource(blob: Blob): Promise<VideoSource | n
 
     // Cache of recent decoded canvases keyed by quantised timestamp.
     const cache = new Map<number, { canvas: HTMLCanvasElement | OffscreenCanvas; ts: number; dur: number }>();
+    // Freed canvases from evicted cache entries, reused for new copies. Without
+    // this every decoded frame allocates a fresh canvas (several MB at 1080p) —
+    // the GC churn shows up as periodic playback stutter.
+    const freeCanvases: HTMLCanvasElement[] = [];
+    const FREE_MAX = 8;
     let lastTs = -1;
     let lastCanvas: { canvas: HTMLCanvasElement | OffscreenCanvas; ts: number; dur: number } | null = null;
     let sequential: AsyncGenerator<any> | null = null;
     let seqNext: number = -1;
     let pending: Promise<any> = Promise.resolve();
+
+    const acquireCopyCanvas = (w: number, h: number): HTMLCanvasElement => {
+      const c = freeCanvases.pop();
+      if (c) {
+        if (c.width !== w || c.height !== h) {
+          c.width = w;
+          c.height = h;
+        }
+        return c;
+      }
+      const nc = document.createElement('canvas');
+      nc.width = w;
+      nc.height = h;
+      return nc;
+    };
+    const evictOne = () => {
+      const first = cache.keys().next().value;
+      if (first === undefined) return;
+      const entry = cache.get(first)!;
+      cache.delete(first);
+      // Only the oldest copy for a given ts owns the canvas; duplicate keys may
+      // point at the same entry. Refcount is overkill: recycling a canvas that
+      // another entry still references only matters if that entry is re-read
+      // later, and re-reads re-decode anyway when the texture differs. Play it
+      // safe and only recycle canvases that are not referenced by any other
+      // cache entry.
+      let shared = false;
+      for (const e of cache.values()) if (e === entry) { shared = true; break; }
+      if (!shared && entry !== lastCanvas && entry.canvas instanceof HTMLCanvasElement && freeCanvases.length < FREE_MAX) freeCanvases.push(entry.canvas);
+    };
 
     const getFrame = async (time: number) => {
       const t = Math.max(0, Math.min(duration - 1e-4, time));
@@ -160,23 +201,41 @@ export async function createWebCodecsSource(blob: Blob): Promise<VideoSource | n
         lastCanvas = hit;
         return hit.canvas;
       }
-      // Sequential fast-path: if we are asking for the frame right after the last one, use the iterator.
-      const run = async () => {
+      // Sequential fast-path: if we are asking for the frame right after the
+      // last one, use the iterator. The window also covers catching up after a
+      // slow frame: advancing the iterator is much cheaper than a re-seek
+      // (which pays a full demux + decoder warm-up and used to spiral — one
+      // slow render made the playhead jump past the window, the re-seek made
+      // the next render slower, and playback collapsed to a few fps).
+      const runAt = async (requestT: number, allowPrefetch: boolean) => {
+        // A queued request may have been satisfied already (duplicate getFrame
+        // calls for the same frame, or a prefetch that landed first).
+        if (lastCanvas && requestT >= lastCanvas.ts && requestT < lastCanvas.ts + Math.max(lastCanvas.dur, 1 / fps) * 1.01) return lastCanvas.canvas;
+        const cachedNow = cache.get(Math.round(requestT * fps * 2));
+        if (cachedNow) {
+          lastCanvas = cachedNow;
+          return cachedNow.canvas;
+        }
         let wrapped: { canvas: HTMLCanvasElement | OffscreenCanvas; timestamp: number; duration: number } | null = null;
-        const delta = t - lastTs;
-        if (sequential && delta > 0 && delta < 1.5 / fps + 0.02) {
-          // advance iterator until timestamp >= t (allow up to a few frames)
-          for (let i = 0; i < 6; i++) {
+        let advanced = false;
+        const delta = requestT - lastTs;
+        if (sequential && delta > 0 && delta < 0.75) {
+          // advance iterator until timestamp >= requestT (up to ~1s of catch-up)
+          for (let i = 0; i < 32; i++) {
             const r = await sequential.next();
             if (r.done) {
               sequential = null;
               break;
             }
             wrapped = r.value;
-            if (wrapped && wrapped.timestamp + wrapped.duration > t) break;
+            advanced = true;
+            if (wrapped && wrapped.timestamp + wrapped.duration > requestT) break;
           }
         }
-        if (!wrapped || wrapped.timestamp > t + 1 / fps) {
+        // Re-seek when the iterator is beyond requestT, behind requestT (e.g.
+        // another consumer seeked it elsewhere), or exhausted.
+        const behind = !wrapped || wrapped.timestamp + (wrapped.duration || 1 / fps) <= requestT;
+        if (behind || !!(wrapped && wrapped.timestamp > requestT + 1 / fps)) {
           if (sequential) {
             try {
               await sequential.return(undefined);
@@ -184,30 +243,53 @@ export async function createWebCodecsSource(blob: Blob): Promise<VideoSource | n
               /* ignore */
             }
           }
-          sequential = sink.canvases(t);
+          sequential = sink.canvases(requestT);
           const r = await sequential.next();
           wrapped = r.done ? null : r.value;
-          seqNext = t;
+          seqNext = requestT;
+          advanced = false;
         }
         void seqNext;
         if (!wrapped) return null;
         // The pool reuses canvases, so copy to a persistent canvas for caching.
-        const copy = document.createElement('canvas');
-        copy.width = wrapped.canvas.width;
-        copy.height = wrapped.canvas.height;
+        const copy = acquireCopyCanvas(wrapped.canvas.width, wrapped.canvas.height);
         copy.getContext('2d')!.drawImage(wrapped.canvas as CanvasImageSource, 0, 0);
         const entry = { canvas: copy, ts: wrapped.timestamp, dur: wrapped.duration };
         lastTs = wrapped.timestamp;
         lastCanvas = entry;
         cache.set(Math.round(wrapped.timestamp * fps * 2), entry);
-        cache.set(key, entry);
-        if (cache.size > 48) {
-          const first = cache.keys().next().value;
-          if (first !== undefined) cache.delete(first);
-        }
+        cache.set(Math.round(requestT * fps * 2), entry);
+        const maxCache = maxDecodeCache();
+        while (cache.size > maxCache) evictOne();
+        // Decode-ahead: while playback advances sequentially, prefetch the next
+        // frame so its decode overlaps the compositor's GL work for this one.
+        if (allowPrefetch && advanced) schedulePrefetch(entry.ts + Math.max(entry.dur, 1 / fps));
         return copy;
       };
-      pending = pending.then(run, run);
+      let prefetching = false;
+      const schedulePrefetch = (nextT: number) => {
+        if (prefetching || !sequential) return;
+        const nt = Math.max(0, Math.min(duration - 1e-4, nextT));
+        if (cache.has(Math.round(nt * fps * 2))) return;
+        prefetching = true;
+        pending = pending.then(
+          () => runAt(nt, false).then(
+            () => {
+              prefetching = false;
+            },
+            () => {
+              prefetching = false;
+            },
+          ),
+          () => {
+            prefetching = false;
+          },
+        );
+      };
+      pending = pending.then(
+        () => runAt(t, true),
+        () => runAt(t, true),
+      );
       return pending;
     };
 
@@ -257,6 +339,7 @@ export function createElementSource(url: string, duration: number, width: number
     el.onerror = () => res();
   });
   let lastTime = -1;
+  let everHadFrame = false;
   let queue: Promise<any> = Promise.resolve();
   const seekTo = (t: number) =>
     new Promise<void>((res) => {
@@ -284,10 +367,16 @@ export function createElementSource(url: string, duration: number, width: number
       const t = Math.max(0, Math.min(duration - 0.001, time));
       const run = async () => {
         if (Math.abs(t - lastTime) > 0.25 / fps) {
-          await seekTo(t);
           lastTime = t;
+          await seekTo(t);
         }
-        return el.readyState >= 2 ? el : null;
+        if (el.readyState >= 2) {
+          everHadFrame = true;
+          return el;
+        }
+        // While a seek settles the element still displays the previous frame.
+        // Show that instead of returning null, which would flash black.
+        return everHadFrame ? el : null;
       };
       queue = queue.then(run, run);
       return queue;

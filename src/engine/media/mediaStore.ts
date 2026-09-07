@@ -18,6 +18,11 @@ export interface MediaRecord {
   peaks?: Float32Array[];
   /** Video frame source. */
   video?: VideoSource;
+  /** Independent decode session for random-access consumers (thumbnails,
+   *  source monitor, analysis) so their seeks never re-seek the sequential
+   *  iterator the program monitor plays through. */
+  scratchVideo?: VideoSource;
+  scratchVideoPromise?: Promise<VideoSource | null> | null;
   /** Error if decoding failed. */
   error?: string;
   ready: Promise<void>;
@@ -86,9 +91,36 @@ export function removeMedia(assetId: Id) {
   if (!rec) return;
   URL.revokeObjectURL(rec.url);
   rec.video?.dispose();
+  rec.scratchVideo?.dispose();
   rec.image?.close?.();
   records.delete(assetId);
   emit();
+}
+
+/**
+ * Random-access decode session, separate from the playback source.
+ *
+ * Timeline thumbnails, the source monitor and analysis passes seek all over
+ * the file; each far seek invalidates the sequential decode iterator that
+ * program-monitor playback relies on (a re-seek costs a full demux+decode
+ * warm-up and stalls the next playback frame behind it). Consumers that jump
+ * around should use this independent session instead.
+ */
+export async function getScratchVideo(rec: MediaRecord): Promise<VideoSource | null> {
+  if (!rec.video) return null;
+  // Element sources seek on their own <video>; sharing is fine and cheap.
+  if (rec.video.kind === 'element') return rec.video;
+  if (rec.scratchVideo) return rec.scratchVideo;
+  if (!rec.scratchVideoPromise) {
+    rec.scratchVideoPromise = (async () => {
+      const { createWebCodecsSource, createElementSource } = await import('./decoder');
+      const wc = await createWebCodecsSource(rec.blob);
+      const src = wc ?? createElementSource(rec.url, rec.video!.duration, rec.video!.width, rec.video!.height, rec.video!.fps);
+      rec.scratchVideo = src;
+      return src;
+    })().catch(() => null);
+  }
+  return rec.scratchVideoPromise;
 }
 
 export function allMedia(): MediaRecord[] {

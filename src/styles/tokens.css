@@ -52,6 +52,7 @@
   --c-focus: #5a90e0;
   --c-warn: #d9a441;
   --c-error: #c9463d;
+  --c-danger: var(--c-error);
   --c-ok: #4da58a;
   --c-keyframe: #d9a441;
   --c-playhead: #3d7bd9;

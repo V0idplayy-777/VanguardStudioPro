@@ -11,6 +11,7 @@ import { LABEL_COLORS, type LabelColor } from '../types/project';
 import { TRANSITIONS, AUDIO_TRANSITIONS } from '../engine/effects/transitions';
 import { EFFECTS } from '../engine/effects/registry';
 import { AUDIO_EFFECTS } from '../engine/effects/audioRegistry';
+import { usePalette } from './CommandPalette';
 
 const WORKSPACES: { id: WorkspaceId; label: string }[] = [
   { id: 'assembly', label: 'Assembly' },
@@ -86,6 +87,15 @@ export function MenuBar() {
         { label: 'Link Media...', onSelect: () => openModal({ kind: 'linkMedia' }) },
         { separator: true },
         {
+          label: 'Capture',
+          submenu: [
+            { label: 'Record Voiceover...', onSelect: () => openModal({ kind: 'recordVoiceover' }) },
+            { label: 'Record Screen...', onSelect: () => openModal({ kind: 'capture', payload: { kind: 'screen' } }) },
+            { label: 'Record Webcam...', onSelect: () => openModal({ kind: 'capture', payload: { kind: 'webcam' } }) },
+          ],
+        },
+        { separator: true },
+        {
           label: 'Export',
           submenu: [
             { label: 'Media...', shortcut: sc('export'), onSelect: () => openModal({ kind: 'export' }) },
@@ -126,8 +136,9 @@ export function MenuBar() {
         { separator: true },
         { label: 'Label', disabled: !hasSel, submenu: labelItems() },
         { separator: true },
+        { label: 'Command Palette...', shortcut: sc('palette'), onSelect: () => usePalette.getState().toggle(true) },
         { label: 'Keyboard Shortcuts...', shortcut: sc('shortcuts'), onSelect: () => openModal({ kind: 'keyboardShortcuts' }) },
-        { label: 'Preferences...', onSelect: () => openModal({ kind: 'preferences' }) },
+        { label: 'Settings...', shortcut: sc('settings'), onSelect: () => openModal({ kind: 'preferences' }) },
       ],
     },
     {
@@ -175,6 +186,10 @@ export function MenuBar() {
         },
         { label: 'Speed / Duration...', shortcut: sc('speed'), disabled: !hasSel, onSelect: () => cmd.speedDuration() },
         { label: 'Scene Edit Detection...', disabled: !hasSel, onSelect: () => openModal({ kind: 'sceneDetect' }) },
+        { label: 'Auto Color', disabled: !hasSel, onSelect: () => void cmd.autoColorSelection() },
+        { label: 'Pan & Zoom (Ken Burns)...', disabled: !hasSel, onSelect: () => openModal({ kind: 'kenBurns' }) },
+        { label: 'Normalize Audio (-14 LUFS)', disabled: !hasSel, onSelect: () => void cmd.normalizeAudio() },
+        { label: 'Remove Silence...', disabled: !hasSel, onSelect: () => openModal({ kind: 'removeSilence' }) },
         { separator: true },
         { label: 'Remove Effects', disabled: !hasSel, onSelect: () => cmd.removeEffects(selectedClipIds()) },
         { label: 'Reveal in Project', disabled: !hasSel, onSelect: () => cmd.revealInProject() },
@@ -210,6 +225,10 @@ export function MenuBar() {
         { label: 'Snap', shortcut: sc('snap'), checked: useUI.getState().snapping, onSelect: () => useUI.getState().setSnapping(!useUI.getState().snapping) },
         { label: 'Linked Selection', checked: useUI.getState().linkedSelection, onSelect: () => useUI.getState().setLinkedSelection(!useUI.getState().linkedSelection) },
         { label: 'Loop Playback', shortcut: sc('loop'), checked: usePlayback.getState().loop, onSelect: () => usePlayback.getState().setLoop(!usePlayback.getState().loop) },
+        { separator: true },
+        { label: 'Detect Beats...', onSelect: () => openModal({ kind: 'beatDetect' }) },
+        { label: 'Cut to Beats', onSelect: () => void cmd.cutToBeats() },
+        { label: 'Auto Reframe...', onSelect: () => openModal({ kind: 'autoReframe' }) },
       ],
     },
     {

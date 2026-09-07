@@ -158,3 +158,67 @@ kbd {
 .dragging-grab * {
   cursor: grabbing !important;
 }
+
+/* ---------- Application settings (Settings dialog / settingsStore) ---------- */
+
+:root {
+  --ui-scale: 1;
+}
+
+/* Interface scale: zooms the entire workspace layout. */
+#root {
+  zoom: var(--ui-scale);
+}
+
+/* Larger text (accessibility): bumps the base size without rescaling layout. */
+html.larger-text {
+  --fs-base: 13px;
+  --fs-menu: 14px;
+  --fs-window: 15px;
+  --fs-tiny: 11px;
+}
+
+/* Reduce motion: strip transitions and animations app-wide. */
+html.reduce-motion *,
+html.reduce-motion *::before,
+html.reduce-motion *::after {
+  transition-duration: 0.001s !important;
+  animation-duration: 0.001s !important;
+  animation-iteration-count: 1 !important;
+  scroll-behavior: auto !important;
+}
+
+/* High contrast: stronger text and separators. */
+html.high-contrast {
+  --c-text: #e2e2e2;
+  --c-text-dim: #a8a8a8;
+  --c-text-faint: #858585;
+  --c-line: #484848;
+  --c-line-strong: #5c5c5c;
+  --c-line-faint: #3a3a3a;
+  --c-panel: #202020;
+  --c-seam: #000;
+}
+html.high-contrast .list-row,
+html.high-contrast .clip,
+html.high-contrast .toolbar,
+html.high-contrast .menubar {
+  outline-color: #4a4a4a;
+}
+
+/* Brighter surfaces for dim rooms / projectors. */
+html.bright-surfaces {
+  --c-app: #1b1b1b;
+  --c-panel: #262626;
+  --c-panel-alt: #222222;
+  --c-panel-header: #2c2c2c;
+  --c-elevated: #303030;
+  --c-line: #3a3a3a;
+  --c-seam: #101010;
+}
+
+/* Strong focus rings (keyboard users). */
+html.strong-focus :focus-visible {
+  outline: 2px solid var(--c-focus) !important;
+  outline-offset: 1px !important;
+}

@@ -91,7 +91,13 @@ export interface ModalRequest {
     | 'workspaceManager'
     | 'timeRemap'
     | 'welcome'
-    | 'easter';
+    | 'easter'
+    | 'recordVoiceover'
+    | 'capture'
+    | 'beatDetect'
+    | 'removeSilence'
+    | 'kenBurns'
+    | 'autoReframe';
   payload?: any;
 }
 

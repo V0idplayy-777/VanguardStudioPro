@@ -326,7 +326,7 @@ export interface Track {
   expanded?: boolean;
 }
 
-export type MarkerKind = 'comment' | 'chapter' | 'segmentation' | 'webLink' | 'flashCue';
+export type MarkerKind = 'comment' | 'chapter' | 'segmentation' | 'webLink' | 'flashCue' | 'beat';
 
 export const MARKER_COLORS: Record<string, string> = { green: '#4da58a', red: '#c9463d', purple: '#7d4f9e', orange: '#c48a3e', yellow: '#b5a23f', white: '#d0d0d0', blue: '#3f6fb5', cyan: '#3f9a8a' };
 export function markerColor(m: { color: string }): string {

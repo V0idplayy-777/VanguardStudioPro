@@ -115,6 +115,8 @@ export const SHORTCUTS: ShortcutDef[] = [
   { id: 'toolHand', keys: 'H', label: 'Hand tool', category: 'Tools', run: () => useUI.getState().setTool('hand') },
   { id: 'toolZoom', keys: 'Z', label: 'Zoom tool', category: 'Tools', run: () => useUI.getState().setTool('zoom') },
   { id: 'escape', keys: 'Esc', label: 'Cancel / deselect', category: 'Edit', run: () => escapeAction() },
+  { id: 'palette', keys: `${mod}+Shift+P`, label: 'Command palette', category: 'Window', run: () => void import('../ui/CommandPalette').then((m) => m.usePalette.getState().toggle()) },
+  { id: 'settings', keys: `${mod}+,`, label: 'Settings', category: 'Window', run: () => useUI.getState().openModal({ kind: 'preferences' }) },
 ];
 
 function seqHasLinked() {
@@ -187,6 +189,12 @@ export function useGlobalShortcuts() {
       const inText = ui.textEditing || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable;
       secretKey(e);
       if (inText) {
+        // The command palette opens even from text fields.
+        if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'p') {
+          e.preventDefault();
+          void import('../ui/CommandPalette').then((m) => m.usePalette.getState().toggle());
+          return;
+        }
         // allow Esc to blur
         if (e.key === 'Escape') (target as HTMLElement).blur?.();
         return;

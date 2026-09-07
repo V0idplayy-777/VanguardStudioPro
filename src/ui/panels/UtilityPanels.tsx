@@ -197,8 +197,9 @@ export function MarkersPanel() {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div className="toolbar">
         <TextField value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search markers" icon="search" style={{ flex: 1 }} />
-        <Select value={filter} options={[{ value: 'all', label: 'All kinds' }, { value: 'comment', label: 'Comment' }, { value: 'chapter', label: 'Chapter' }, { value: 'segmentation', label: 'Segmentation' }, { value: 'webLink', label: 'Web link' }, { value: 'flashCue', label: 'Cue' }]} onChange={(v) => setFilter(v as any)} />
+        <Select value={filter} options={[{ value: 'all', label: 'All kinds' }, { value: 'comment', label: 'Comment' }, { value: 'chapter', label: 'Chapter' }, { value: 'segmentation', label: 'Segmentation' }, { value: 'webLink', label: 'Web link' }, { value: 'flashCue', label: 'Cue' }, { value: 'beat', label: 'Beat' }]} onChange={(v) => setFilter(v as any)} />
         <IconButton icon="marker" label="Add marker at playhead (M)" sm onClick={() => cmd.addMarker()} />
+        <Button sm icon="beat" onClick={() => useUI.getState().openModal({ kind: 'beatDetect' })} title="Detect beats in a music clip and mark them">Detect Beats</Button>
         <IconButton icon="export" label="Export markers" sm onClick={(e) => useUI.getState().openContextMenu(e.clientX, e.clientY, [{ label: 'CSV', onSelect: () => cmd.exportMarkers('csv') }, { label: 'YouTube chapters (text)', onSelect: () => cmd.exportMarkers('chapters') }])} />
       </div>
       <div className="scroll-y" style={{ flex: 1 }}>

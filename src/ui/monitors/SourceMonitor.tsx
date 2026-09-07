@@ -75,10 +75,13 @@ export function SourceMonitor() {
       }
       if (rec?.video) {
         try {
-          const img = await rec.video.getFrame(time);
+          // Scrubbing seeks all over the file; use the scratch decode session
+          // so it never stalls the sequential iterator program playback uses.
+          const { getScratchVideo } = await import('../../engine/media/mediaStore');
+          const v = (await getScratchVideo(rec).catch(() => null)) ?? rec.video;
+          const img = await v.getFrame(time);
           if (cancelled || !img) return;
           ctx.drawImage(img as CanvasImageSource, 0, 0, W, H);
-          if ((img as VideoFrame).close && rec.video.kind === 'webcodecs') (img as VideoFrame).close();
           return;
         } catch {
           /* fall through */

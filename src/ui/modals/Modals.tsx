@@ -5,7 +5,7 @@ import { usePlayback, renderFrameToCanvas } from '../../engine/playback/playback
 import { useLayout } from '../../state/layoutStore';
 import { Modal, Button, Select, Checkbox, HotText, TextField, TextArea, TimecodeField, ColorChip, Segmented, Kbd, Slider } from '../controls';
 import { Icon, Swatch, type IconName } from '../icons';
-import { cmd } from '../../app/commands';
+import { cmd, pickAudioClip } from '../../app/commands';
 import { SHORTCUTS } from '../../app/shortcuts';
 import { ExportPanel } from '../panels/ExportPanel';
 import { LABEL_COLORS, MARKER_COLORS, DEFAULT_SEQUENCE_SETTINGS, type LabelColor, type Marker, type MarkerKind, type SequenceSettings, type Clip } from '../../types/project';
@@ -16,6 +16,7 @@ import { autosaveInfo, loadAutosavedProject, restoreProjectMedia, discardAutosav
 import { estimateStorage } from '../../engine/media/mediaDb';
 import { formatBytes, uid, isMac } from '../../engine/util';
 import { aboutVersionClick, foundCount, EGG_TOTAL, checkSpeedEgg, checkSequenceNameEgg } from '../../easter/eggs';
+import { useSettings, SETTINGS_META, ACCENT_PRESETS } from '../../state/settingsStore';
 import { TRANSITIONS, AUDIO_TRANSITIONS } from '../../engine/effects/transitions';
 import { blankTextDocument, shapeLayer } from '../graphics/templates';
 import * as E from '../../engine/timeline/edits';
@@ -92,6 +93,18 @@ export function ModalHost() {
       return <WelcomeModal {...props} />;
     case 'easter':
       return null;
+    case 'recordVoiceover':
+      return <VoiceoverModal {...props} />;
+    case 'capture':
+      return <CaptureModal {...props} />;
+    case 'beatDetect':
+      return <BeatDetectModal {...props} />;
+    case 'removeSilence':
+      return <RemoveSilenceModal {...props} />;
+    case 'kenBurns':
+      return <KenBurnsModal {...props} />;
+    case 'autoReframe':
+      return <AutoReframeModal {...props} />;
     default:
       return null;
   }
@@ -551,7 +564,7 @@ function MarkerModal({ modal, close }: P) {
     });
     close();
   };
-  const kinds: { value: MarkerKind; label: string }[] = [{ value: 'comment', label: 'Comment Marker' }, { value: 'chapter', label: 'Chapter Marker' }, { value: 'segmentation', label: 'Segmentation Marker' }, { value: 'webLink', label: 'Web Link' }, { value: 'flashCue', label: 'Flash Cue Point' }];
+  const kinds: { value: MarkerKind; label: string }[] = [{ value: 'comment', label: 'Comment Marker' }, { value: 'chapter', label: 'Chapter Marker' }, { value: 'segmentation', label: 'Segmentation Marker' }, { value: 'webLink', label: 'Web Link' }, { value: 'flashCue', label: 'Flash Cue Point' }, { value: 'beat', label: 'Beat Marker' }];
   void project;
   return (
     <Modal title={owner ? 'Clip Marker' : 'Sequence Marker'} icon="marker" onClose={ok} width={460} footer={<><Button danger onClick={del}>Delete</Button><span className="spacer" /><Button onClick={() => go(-1)} disabled={idx <= 0}>Previous</Button><Button onClick={() => go(1)} disabled={idx >= all.length - 1}>Next</Button><Button primary onClick={ok}>OK</Button></>}>
@@ -1215,104 +1228,827 @@ function ShortcutsModal({ close }: P) {
   );
 }
 
-/* ---------- Preferences ---------- */
+/* ---------- Settings (categorized, searchable) ---------- */
+
+type SettingsCat = 'general' | 'appearance' | 'timeline' | 'playback' | 'audio' | 'accessibility' | 'performance' | 'autosave' | 'experimental';
+
+const SETTINGS_CATS: { id: SettingsCat; label: string; icon: IconName; blurb: string }[] = [
+  { id: 'general', label: 'General', icon: 'settings', blurb: 'Project defaults: stills, transitions, timecode, labels.' },
+  { id: 'appearance', label: 'Appearance', icon: 'color', blurb: 'Scale, accent color and surface brightness.' },
+  { id: 'timeline', label: 'Timeline', icon: 'panelTimeline', blurb: 'Snapping, selection and clip display.' },
+  { id: 'playback', label: 'Playback', icon: 'play', blurb: 'Program monitor quality and transport behaviour.' },
+  { id: 'audio', label: 'Audio', icon: 'panelAudio', blurb: 'Hardware latency and master level.' },
+  { id: 'accessibility', label: 'Accessibility', icon: 'eye', blurb: 'Motion, contrast, text size and photosensitivity options.' },
+  { id: 'performance', label: 'Performance', icon: 'panelScopes', blurb: 'Thumbnails, decode cache and diagnostics.' },
+  { id: 'autosave', label: 'Auto Save', icon: 'panelHistory', blurb: 'Automatic project snapshots and workspace reset.' },
+  { id: 'experimental', label: 'Experimental', icon: 'panelEffects', blurb: 'Render pipeline switches. Off by default? Good - leave it.' },
+];
+
 function PreferencesModal({ close }: P) {
   const ui = useUI();
   const project = useProject((s) => s.project);
-  const [tab, setTab] = useState<'general' | 'timeline' | 'audio' | 'playback' | 'autosave'>('general');
+  const st = useSettings();
+  const [tab, setTab] = useState<SettingsCat>('general');
+  const [q, setQ] = useState('');
   const set = (label: string, fn: (s: typeof project.settings) => void) => useProject.getState().update(label, (p) => fn(p.settings));
   const S = project.settings;
-  return (
-    <Modal title="Preferences" icon="settings" onClose={close} width={640} footer={<><span className="spacer" /><Button primary onClick={close}>Done</Button></>}>
-      <div style={{ display: 'grid', gridTemplateColumns: '150px 1fr', gap: 14, minHeight: 300 }}>
-        <div style={{ borderRight: '1px solid var(--c-line)' }}>
-          {(['general', 'timeline', 'audio', 'playback', 'autosave'] as const).map((t) => (
-            <div key={t} className={`list-row${tab === t ? ' selected' : ''}`} onClick={() => setTab(t)} style={{ textTransform: 'capitalize' }}>{t}</div>
-          ))}
+
+  const Row = ({ label, desc, children, badge }: { label: string; desc?: string; children: React.ReactNode; badge?: string }) => (
+    <div className="settings-row">
+      <span className="lbl">
+        <div className="name">
+          {label}
+          {badge ? <span className="badge-beta">{badge}</span> : null}
         </div>
-        <div>
+        {desc ? <div className="desc">{desc}</div> : null}
+      </span>
+      <span className="ctl">{children}</span>
+    </div>
+  );
+
+  const searchHit = (...terms: string[]) => !q.trim() || terms.some((t) => t.toLowerCase().includes(q.trim().toLowerCase()));
+
+  return (
+    <Modal title="Settings" icon="settings" onClose={close} width={780} footer={<><span className="dim" style={{ fontSize: 11 }}>Settings apply immediately and persist in this browser.</span><span className="spacer" /><Button primary onClick={close}>Done</Button></>}>
+      <TextField value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search settings..." icon="search" style={{ marginBottom: 10, width: 260 }} />
+      <div style={{ display: 'grid', gridTemplateColumns: '176px 1fr', gap: 16, minHeight: 340 }}>
+        <div className="settings-side" style={{ borderRight: '1px solid var(--c-line)', paddingRight: 8 }}>
+          {SETTINGS_CATS.filter((c) => !q.trim() || searchHit(c.label, c.blurb)).map((c) => (
+            <div key={c.id} className={`settings-cat${tab === c.id ? ' sel' : ''}`} onClick={() => setTab(c.id)}>
+              <Icon name={c.icon} size={13} />
+              {c.label}
+            </div>
+          ))}
+          <div style={{ flex: 1 }} />
+          <div style={{ display: 'flex', gap: 6, padding: '8px 0' }}>
+            <Button sm onClick={() => { st.reset(); useUI.getState().toast({ kind: 'info', title: 'Settings reset', message: 'App settings are back to defaults.' }); }}>Reset app settings</Button>
+          </div>
+        </div>
+        <div className="scroll-y" style={{ maxHeight: '56vh', paddingRight: 6 }}>
           {tab === 'general' ? (
-            <div className="prop-grid">
-              <span className="label">Still image duration</span>
-              <HotText value={S.defaultStillDuration / S.defaultSequence.fps} min={0.1} max={600} step={0.5} decimals={1} unit=" s" width={70} onChange={(v, c) => c && set('Preferences', (s) => (s.defaultStillDuration = Math.round(v * s.defaultSequence.fps)))} />
-              <span className="label">Video transition</span>
-              <span style={{ display: 'flex', gap: 6 }}>
-                <Select value={S.defaultVideoTransition} options={TRANSITIONS.map((t) => ({ value: t.type, label: t.name }))} onChange={(v) => set('Preferences', (s) => (s.defaultVideoTransition = v))} />
-                <HotText value={S.defaultTransitionDuration} min={2} max={600} step={1} unit=" fr" width={60} onChange={(v, c) => c && set('Preferences', (s) => (s.defaultTransitionDuration = Math.round(v)))} />
-              </span>
-              <span className="label">Audio transition</span>
-              <span style={{ display: 'flex', gap: 6 }}>
-                <Select value={S.defaultAudioTransition} options={AUDIO_TRANSITIONS.map((t) => ({ value: t.type, label: t.name }))} onChange={(v) => set('Preferences', (s) => (s.defaultAudioTransition = v))} />
-                <HotText value={S.defaultAudioTransitionDuration} min={2} max={600} step={1} unit=" fr" width={60} onChange={(v, c) => c && set('Preferences', (s) => (s.defaultAudioTransitionDuration = Math.round(v)))} />
-              </span>
-              <span className="label">Timecode display</span>
-              <Segmented value={ui.timecodeMode} options={[{ value: 'timecode', label: 'Timecode' }, { value: 'frames', label: 'Frames' }, { value: 'seconds', label: 'Seconds' }]} onChange={(v) => ui.setTimecodeMode(v)} />
-              <span className="label">Label defaults</span>
-              <span style={{ display: 'grid', gridTemplateColumns: 'repeat(2, auto 1fr)', gap: '4px 8px', alignItems: 'center' }}>
-                {(Object.keys(S.labelDefaults) as (keyof typeof S.labelDefaults)[]).map((k) => (
-                  <React.Fragment key={k}>
-                    <span className="dim" style={{ textTransform: 'capitalize' }}>{k}</span>
-                    <Select value={S.labelDefaults[k]} options={(Object.keys(LABEL_COLORS) as LabelColor[]).map((l) => ({ value: l, label: l }))} onChange={(v) => set('Preferences', (s) => (s.labelDefaults[k] = v as LabelColor))} />
-                  </React.Fragment>
-                ))}
-              </span>
-            </div>
+            <>
+              <div className="settings-section-title">Editing defaults</div>
+              {searchHit('still image duration') ? (
+                <Row label="Still image duration" desc="Length used when images are added to the timeline.">
+                  <HotText value={S.defaultStillDuration / S.defaultSequence.fps} min={0.1} max={600} step={0.5} decimals={1} unit=" s" width={70} onChange={(v, c) => c && set('Preferences', (s) => (s.defaultStillDuration = Math.round(v * s.defaultSequence.fps)))} />
+                </Row>
+              ) : null}
+              {searchHit('video transition', 'default transition') ? (
+                <Row label="Video transition" desc="Applied by Ctrl+D and the Effects panel default.">
+                  <span style={{ display: 'flex', gap: 6 }}>
+                    <Select value={S.defaultVideoTransition} options={TRANSITIONS.map((t) => ({ value: t.type, label: t.name }))} onChange={(v) => set('Preferences', (s) => (s.defaultVideoTransition = v))} />
+                    <HotText value={S.defaultTransitionDuration} min={2} max={600} step={1} unit=" fr" width={60} onChange={(v, c) => c && set('Preferences', (s) => (s.defaultTransitionDuration = Math.round(v)))} />
+                  </span>
+                </Row>
+              ) : null}
+              {searchHit('audio transition') ? (
+                <Row label="Audio transition">
+                  <span style={{ display: 'flex', gap: 6 }}>
+                    <Select value={S.defaultAudioTransition} options={AUDIO_TRANSITIONS.map((t) => ({ value: t.type, label: t.name }))} onChange={(v) => set('Preferences', (s) => (s.defaultAudioTransition = v))} />
+                    <HotText value={S.defaultAudioTransitionDuration} min={2} max={600} step={1} unit=" fr" width={60} onChange={(v, c) => c && set('Preferences', (s) => (s.defaultAudioTransitionDuration = Math.round(v)))} />
+                  </span>
+                </Row>
+              ) : null}
+              {searchHit('timecode') ? (
+                <Row label="Timecode display" desc="Shown in monitors, the timeline and exported lists.">
+                  <Segmented value={ui.timecodeMode} options={[{ value: 'timecode', label: 'TC' }, { value: 'frames', label: 'Frames' }, { value: 'seconds', label: 'Seconds' }]} onChange={(v) => ui.setTimecodeMode(v)} />
+                </Row>
+              ) : null}
+              {searchHit('label colors', 'label defaults') ? (
+                <Row label="Label defaults" desc="Clip label color per media type.">
+                  <span style={{ display: 'grid', gridTemplateColumns: 'repeat(2, auto 1fr)', gap: '4px 8px', alignItems: 'center' }}>
+                    {(Object.keys(S.labelDefaults) as (keyof typeof S.labelDefaults)[]).map((k) => (
+                      <React.Fragment key={k}>
+                        <span className="dim" style={{ textTransform: 'capitalize' }}>{k}</span>
+                        <Select value={S.labelDefaults[k]} options={(Object.keys(LABEL_COLORS) as LabelColor[]).map((l) => ({ value: l, label: l }))} onChange={(v) => set('Preferences', (s) => (s.labelDefaults[k] = v as LabelColor))} />
+                      </React.Fragment>
+                    ))}
+                  </span>
+                </Row>
+              ) : null}
+            </>
           ) : null}
-          {tab === 'timeline' ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <Checkbox checked={ui.snapping} onChange={ui.setSnapping} label="Snap while dragging (S)" />
-              <Checkbox checked={ui.linkedSelection} onChange={ui.setLinkedSelection} label="Linked selection - select audio and video together" />
-              <Checkbox checked={ui.rippleDelete} onChange={(v) => useUI.setState({ rippleDelete: v })} label="Delete key ripples (closes the gap)" />
-              <Checkbox checked={ui.showAudioWaveforms} onChange={(v) => ui.setTimelineDisplay({ showAudioWaveforms: v })} label="Show audio waveforms" />
-              <Checkbox checked={ui.showVideoThumbnails} onChange={(v) => ui.setTimelineDisplay({ showVideoThumbnails: v })} label="Show video thumbnails" />
-              <Checkbox checked={ui.showClipNames} onChange={(v) => ui.setTimelineDisplay({ showClipNames: v })} label="Show clip names" />
-              <div className="prop-grid" style={{ marginTop: 4 }}>
-                <span className="label">Nudge distance</span>
-                <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                  <HotText value={ui.nudgeFrames} min={1} max={100} step={1} unit=" fr" width={60} onChange={(v, c) => c && useUI.setState({ nudgeFrames: Math.round(v) })} />
-                  <span className="dim">Alt+Left/Right nudges by this; Alt+Shift by 5x.</span>
+
+          {tab === 'appearance' ? (
+            <>
+              <div className="settings-section-title">Interface</div>
+              <Row label="Interface scale" desc={SETTINGS_META.uiScale.hint}>
+                <Segmented value={String(st.uiScale)} options={[85, 95, 100, 105, 115, 125].map((v) => ({ value: String(v), label: `${v}%` }))} onChange={(v) => st.set('uiScale', Number(v))} />
+              </Row>
+              <Row label="Accent color" desc="Playhead, selection and highlights.">
+                <span style={{ display: 'flex', gap: 6 }}>
+                  {ACCENT_PRESETS.map((a) => (
+                    <span key={a.value} title={a.name} onClick={() => st.set('accent', a.value)} style={{ width: 20, height: 20, borderRadius: 3, cursor: 'pointer', background: a.value, outline: st.accent === a.value ? '2px solid #e0e0e0' : '1px solid #0b0b0b', outlineOffset: st.accent === a.value ? 0 : -1 }} />
+                  ))}
                 </span>
-              </div>
-            </div>
+              </Row>
+              <Row label="Brighter surfaces" desc={SETTINGS_META.brightSurfaces.hint}>
+                <Checkbox checked={st.brightSurfaces} onChange={(v) => st.set('brightSurfaces', v)} />
+              </Row>
+            </>
           ) : null}
-          {tab === 'audio' ? (
-            <div className="prop-grid">
-              <span className="label">Latency</span>
-              <Segmented value={S.audioHardware.latencyHint} options={[{ value: 'interactive', label: 'Interactive (low)' }, { value: 'balanced', label: 'Balanced' }, { value: 'playback', label: 'Playback (stable)' }]} onChange={(v) => set('Preferences', (s) => (s.audioHardware.latencyHint = v))} />
-              <span />
-              <span className="dim" style={{ fontSize: 11 }}>Takes effect for new audio sessions (reload). Sample rate follows the sequence, 48 kHz by default.</span>
-              <span className="label">Master</span>
-              <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <HotText value={usePlayback.getState().masterDb} min={-60} max={12} step={0.5} decimals={1} unit=" dB" width={70} onChange={(v, c) => c && usePlayback.getState().setMaster(v)} />
-                <Button sm onClick={() => usePlayback.getState().setMaster(0)}>Reset</Button>
-              </span>
-            </div>
+
+          {tab === 'timeline' ? (
+            <>
+              <div className="settings-section-title">Editing</div>
+              <Row label="Snap while dragging (S)" desc="Clips, markers and the playhead attract each other.">
+                <Checkbox checked={ui.snapping} onChange={ui.setSnapping} />
+              </Row>
+              <Row label="Linked selection" desc="Select audio and video parts together.">
+                <Checkbox checked={ui.linkedSelection} onChange={ui.setLinkedSelection} />
+              </Row>
+              <Row label="Delete ripples" desc="The delete key closes the gap instead of leaving one.">
+                <Checkbox checked={ui.rippleDelete} onChange={(v) => useUI.setState({ rippleDelete: v })} />
+              </Row>
+              <div className="settings-section-title">Clip display</div>
+              <Row label="Audio waveforms"><Checkbox checked={ui.showAudioWaveforms} onChange={(v) => ui.setTimelineDisplay({ showAudioWaveforms: v })} /></Row>
+              <Row label="Video thumbnails"><Checkbox checked={ui.showVideoThumbnails} onChange={(v) => ui.setTimelineDisplay({ showVideoThumbnails: v })} /></Row>
+              <Row label="Clip names"><Checkbox checked={ui.showClipNames} onChange={(v) => ui.setTimelineDisplay({ showClipNames: v })} /></Row>
+              <Row label="Nudge distance" desc="Alt+Left/Right nudges by this; Alt+Shift by 5x.">
+                <HotText value={ui.nudgeFrames} min={1} max={100} step={1} unit=" fr" width={60} onChange={(v, c) => c && useUI.setState({ nudgeFrames: Math.round(v) })} />
+              </Row>
+            </>
           ) : null}
+
           {tab === 'playback' ? (
-            <div className="prop-grid">
-              <span className="label">Program quality</span>
-              <Segmented value={ui.programQuality} options={[{ value: 'full', label: 'Full' }, { value: 'half', label: '1/2' }, { value: 'quarter', label: '1/4' }]} onChange={(v) => ui.setProgramQuality(v)} />
-              <span className="label">Shuttle</span>
-              <span className="dim" style={{ fontSize: 11 }}>J/K/L step through 1x, 2x, 4x, 8x. Space plays at 1x, Shift+Space plays around the playhead.</span>
-              <span className="label">Loop</span>
-              <Checkbox checked={usePlayback.getState().loop} onChange={(v) => usePlayback.getState().setLoop(v)} label="Loop playback between In and Out (or the whole sequence)" />
-            </div>
+            <>
+              <div className="settings-section-title">Program monitor</div>
+              <Row label="Resolution for new sessions" desc="Can be changed per session from the monitor toolbar.">
+                <Segmented value={st.defaultProgramQuality} options={[{ value: 'full', label: 'Full' }, { value: 'half', label: '1/2' }, { value: 'quarter', label: '1/4' }]} onChange={(v) => st.set('defaultProgramQuality', v)} />
+              </Row>
+              <Row label="Current session" desc="Applies right now.">
+                <Segmented value={ui.programQuality} options={[{ value: 'full', label: 'Full' }, { value: 'half', label: '1/2' }, { value: 'quarter', label: '1/4' }]} onChange={(v) => ui.setProgramQuality(v)} />
+              </Row>
+              <Row label="Drop quality to keep up" desc={SETTINGS_META.autoQualityDrop.hint}>
+                <Checkbox checked={st.autoQualityDrop} onChange={(v) => st.set('autoQualityDrop', v)} />
+              </Row>
+              <Row label="End on the last video frame" desc={SETTINGS_META.parkOnLastFrame.hint}>
+                <Checkbox checked={st.parkOnLastFrame} onChange={(v) => st.set('parkOnLastFrame', v)} />
+              </Row>
+              <div className="settings-section-title">Transport</div>
+              <Row label="Shuttle" desc="J/K/L step through 1x, 2x, 4x, 8x. Space plays at 1x.">
+                <span className="dim" style={{ fontSize: 11 }}>J K L</span>
+              </Row>
+              <Row label="Loop playback" desc="Loop between In and Out (or the whole sequence).">
+                <Checkbox checked={usePlayback.getState().loop} onChange={(v) => usePlayback.getState().setLoop(v)} />
+              </Row>
+            </>
           ) : null}
+
+          {tab === 'audio' ? (
+            <>
+              <div className="settings-section-title">Hardware</div>
+              <Row label="Latency" desc="Takes effect for new audio sessions (reload). Sample rate follows the sequence, 48 kHz by default.">
+                <Segmented value={S.audioHardware.latencyHint} options={[{ value: 'interactive', label: 'Low' }, { value: 'balanced', label: 'Balanced' }, { value: 'playback', label: 'Stable' }]} onChange={(v) => set('Preferences', (s) => (s.audioHardware.latencyHint = v))} />
+              </Row>
+              <div className="settings-section-title">Master</div>
+              <Row label="Master level" desc="Output trim on the audio master bus.">
+                <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <HotText value={usePlayback.getState().masterDb} min={-60} max={12} step={0.5} decimals={1} unit=" dB" width={70} onChange={(v, c) => c && usePlayback.getState().setMaster(v)} />
+                  <Button sm onClick={() => usePlayback.getState().setMaster(0)}>Reset</Button>
+                </span>
+              </Row>
+            </>
+          ) : null}
+
+          {tab === 'accessibility' ? (
+            <>
+              <div className="settings-section-title">Vision</div>
+              <Row label="Larger text" desc={SETTINGS_META.largerText.hint}>
+                <Checkbox checked={st.largerText} onChange={(v) => st.set('largerText', v)} />
+              </Row>
+              <Row label="High contrast interface" desc={SETTINGS_META.highContrast.hint}>
+                <Checkbox checked={st.highContrast} onChange={(v) => st.set('highContrast', v)} />
+              </Row>
+              <Row label="Strong focus rings" desc={SETTINGS_META.strongFocus.hint}>
+                <Checkbox checked={st.strongFocus} onChange={(v) => st.set('strongFocus', v)} />
+              </Row>
+              <div className="settings-section-title">Motion & photosensitivity</div>
+              <Row label="Reduce motion" desc={SETTINGS_META.reduceMotion.hint}>
+                <Checkbox checked={st.reduceMotion} onChange={(v) => st.set('reduceMotion', v)} />
+              </Row>
+              <Row label="Disable flashing effects" desc={SETTINGS_META.disableFlashingEffects.hint}>
+                <Checkbox checked={st.disableFlashingEffects} onChange={(v) => st.set('disableFlashingEffects', v)} />
+              </Row>
+              <div className="settings-section-title">Feedback</div>
+              <Row label="Verbose notifications" desc="Confirm more actions with toasts, even when the result is already visible.">
+                <Checkbox checked={st.verboseToasts} onChange={(v) => st.set('verboseToasts', v)} />
+              </Row>
+            </>
+          ) : null}
+
+          {tab === 'performance' ? (
+            <>
+              <div className="settings-section-title">Thumbnails & caches</div>
+              <Row label="Timeline thumbnails" desc="Off skips thumbnail decoding entirely (useful for huge projects).">
+                <Segmented value={st.thumbnailQuality} options={[{ value: 'off', label: 'Off' }, { value: 'low', label: 'Low' }, { value: 'high', label: 'High' }]} onChange={(v) => st.set('thumbnailQuality', v)} />
+              </Row>
+              <Row label="Decode cache" desc="Decoded frames kept per video source. Higher = smoother scrubbing, more memory.">
+                <Segmented value={String(st.decodeCacheSize)} options={[24, 48, 96, 160].map((v) => ({ value: String(v), label: String(v) }))} onChange={(v) => st.set('decodeCacheSize', Number(v))} />
+              </Row>
+              <div className="settings-section-title">Diagnostics</div>
+              <Row label="Performance overlay" desc={SETTINGS_META.showFpsOverlay.hint}>
+                <Checkbox checked={st.showFpsOverlay} onChange={(v) => st.set('showFpsOverlay', v)} />
+              </Row>
+            </>
+          ) : null}
+
           {tab === 'autosave' ? (
-            <div className="prop-grid">
-              <span className="label">Autosave</span>
-              <Checkbox checked={S.autoSaveEnabled} onChange={(v) => set('Preferences', (s) => (s.autoSaveEnabled = v))} label="Automatically save the project in browser storage" />
-              <span className="label">Interval</span>
-              <HotText value={S.autoSaveIntervalMinutes} min={1} max={60} step={1} unit=" min" width={70} onChange={(v, c) => c && set('Preferences', (s) => (s.autoSaveIntervalMinutes = Math.round(v)))} disabled={!S.autoSaveEnabled} />
-              <span />
-              <span className="dim" style={{ fontSize: 11 }}>Autosaves only when something changed. Imported media is cached in IndexedDB so a reload restores the project; use File, Save Project for a portable .vsproj file.</span>
-              <span className="label">Reset UI</span>
-              <span style={{ display: 'flex', gap: 6 }}>
+            <>
+              <div className="settings-section-title">Auto Save</div>
+              <Row label="Autosave" desc="Automatically save the project in browser storage when something changed.">
+                <Checkbox checked={S.autoSaveEnabled} onChange={(v) => set('Preferences', (s) => (s.autoSaveEnabled = v))} />
+              </Row>
+              <Row label="Interval" desc="Autosaves only when something changed. Media is cached in IndexedDB so a reload restores the project.">
+                <HotText value={S.autoSaveIntervalMinutes} min={1} max={60} step={1} unit=" min" width={70} onChange={(v, c) => c && set('Preferences', (s) => (s.autoSaveIntervalMinutes = Math.round(v)))} disabled={!S.autoSaveEnabled} />
+              </Row>
+              <div className="settings-section-title">Reset</div>
+              <Row label="Workspaces" desc="Bring every workspace layout back to its preset.">
                 <Button sm onClick={() => { useLayout.getState().resetAll(); useUI.getState().bumpLayout(); toast('info', 'Workspaces reset'); }}>Reset all workspaces</Button>
-                <Button sm danger onClick={() => { localStorage.clear(); toast('info', 'Local preferences cleared', 'Reload to apply.'); }}>Clear local preferences</Button>
-              </span>
-            </div>
+              </Row>
+              <Row label="Local data" desc="Clears layouts, settings and caches kept in this browser.">
+                <Button sm danger onClick={() => { localStorage.clear(); toast('info', 'Local data cleared', 'Reload to apply.'); }}>Clear local data</Button>
+              </Row>
+            </>
           ) : null}
+
+          {tab === 'experimental' ? (
+            <>
+              <div className="settings-section-title">Render pipeline</div>
+              <Row label="Half-float render pipeline" badge="beta" desc="Higher precision compositing; disable on GPUs that glitch.">
+                <Checkbox checked={st.floatPipeline} onChange={(v) => st.set('floatPipeline', v)} />
+              </Row>
+              <Row label="Snapshot presentation" badge="beta" desc={SETTINGS_META.snapshotPresentation.hint}>
+                <Checkbox checked={st.snapshotPresentation} onChange={(v) => st.set('snapshotPresentation', v)} />
+              </Row>
+              <Row label="Low-latency canvas" desc="Hint that lets the browser composite frames earlier. Turn off if you see tearing.">
+                <Checkbox checked={st.desyncCanvas} onChange={(v) => st.set('desyncCanvas', v)} />
+              </Row>
+              <Row label="Render debug logging" desc="Write render diagnostics to the Events panel (Window, Events).">
+                <Checkbox checked={st.debugRenderLogging} onChange={(v) => st.set('debugRenderLogging', v)} />
+              </Row>
+            </>
+          ) : null}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/* ---------- Voiceover recording ---------- */
+function VoiceoverModal({ close }: P) {
+  const seq = useActiveSequence();
+  const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
+  const [deviceId, setDeviceId] = useState<string>('');
+  const [session, setSession] = useState<import('../../engine/media/recorder').CaptureSession | null>(null);
+  const [countdown, setCountdown] = useState<number | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+  const [level, setLevel] = useState(0);
+  const [roll, setRoll] = useState(true);
+  const [preroll, setPreroll] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const recordFrame = useRef(0);
+  const sessionRef = useRef<typeof session>(null);
+  sessionRef.current = session;
+
+  useEffect(() => {
+    navigator.mediaDevices?.enumerateDevices().then((all) => setDevices(all.filter((d) => d.kind === 'audioinput'))).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!session) return;
+    const iv = window.setInterval(() => {
+      const s = sessionRef.current;
+      if (!s) return;
+      setElapsed(s.elapsed());
+      setLevel(s.level() ?? 0);
+    }, 60);
+    return () => window.clearInterval(iv);
+  }, [session]);
+
+  const start = async () => {
+    if (!seq) return;
+    try {
+      setBusy(true);
+      const { startCapture } = await import('../../engine/media/recorder');
+      const startFrame = usePlayback.getState().playhead;
+      recordFrame.current = startFrame;
+      if (preroll) {
+        for (let n = 3; n > 0; n--) {
+          setCountdown(n);
+          await new Promise((r) => setTimeout(r, 800));
+        }
+        setCountdown(null);
+      }
+      const s = await startCapture('voiceover', { deviceId: deviceId || undefined });
+      setSession(s);
+      setBusy(false);
+      if (roll) usePlayback.getState().play(1);
+    } catch (e: any) {
+      setBusy(false);
+      setCountdown(null);
+      toast('error', 'Microphone unavailable', e?.message ?? String(e));
+    }
+  };
+
+  const stop = async () => {
+    const s = sessionRef.current;
+    if (!s) return;
+    setBusy(true);
+    usePlayback.getState().pause();
+    const result = await s.stop();
+    setSession(null);
+    const { importCapture } = await import('../../engine/media/recorder');
+    const stamp = new Date();
+    const name = `Voiceover ${stamp.getHours().toString().padStart(2, '0')}.${stamp.getMinutes().toString().padStart(2, '0')}`;
+    const assets = await importCapture(result, name);
+    if (assets[0] && seq) {
+      await new Promise((r) => setTimeout(r, 250));
+      const live = useProject.getState().project.assets.find((a) => a.id === assets[0].id);
+      if (live) cmd.placeAssetsAt([live], recordFrame.current, 'overwrite');
+      toast('success', 'Voiceover recorded', `${result.durationSec.toFixed(1)} s placed on the first audio track at the record position.`);
+    }
+    setBusy(false);
+    close();
+  };
+
+  const fmt = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}.${Math.floor((ms % 1000) / 100)}`;
+  const meter = (v: number) => Math.max(0, Math.min(1, v * 1.4));
+
+  return (
+    <Modal title="Record Voiceover" icon="mic" onClose={() => (session ? void stop() : close())} width={480} footer={
+      <>
+        <span className="dim" style={{ fontSize: 11 }}>{session ? `Recording${roll ? ' - timeline rolling' : ''}` : 'Records from your microphone onto an audio track'}</span>
+        <span className="spacer" />
+        {session ? (
+          <Button danger onClick={() => void stop()} disabled={busy}>Stop &amp; Add to Timeline</Button>
+        ) : (
+          <>
+            <Button onClick={close}>Cancel</Button>
+            <Button primary onClick={() => void start()} disabled={busy || !seq}>{countdown != null ? `Starting in ${countdown}...` : busy ? 'Requesting microphone...' : preroll ? 'Record (with count-in)' : 'Record'}</Button>
+          </>
+        )}
+      </>
+    }>
+      {!seq ? <div className="empty">Open a sequence first - the voiceover is placed at the playhead.</div> : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div className="prop-grid">
+            <span className="label">Microphone</span>
+            <Select
+              value={deviceId}
+              options={[{ value: '', label: 'Default microphone' }, ...devices.filter((d) => d.deviceId).map((d) => ({ value: d.deviceId, label: d.label || 'Microphone' }))]}
+              onChange={setDeviceId}
+              disabled={!!session}
+            />
+            <span className="label">Starts at</span>
+            <span className="dim" style={{ fontSize: 11 }}>The current playhead{seq ? ` (${framesToTimecode(usePlayback.getState().playhead, seq.settings.fps)})` : ''}. Playback rolls while recording so you can narrate to picture.</span>
+          </div>
+          <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
+            <Checkbox checked={roll} onChange={setRoll} label="Roll timeline while recording" disabled={!!session} />
+            <Checkbox checked={preroll} onChange={setPreroll} label="3-second count-in" disabled={!!session} />
+          </div>
+          <div className="vo-meter-wrap">
+            <div className={`vo-meter${session ? ' live' : ''}`}>
+              {Array.from({ length: 24 }, (_, i) => {
+                const on = meter(level) * 24 > i;
+                return <span key={i} className={on ? (i > 19 ? 'hot' : 'on') : ''} />;
+              })}
+            </div>
+            <span style={{ fontSize: 13, color: session ? 'var(--c-error)' : 'var(--c-text-faint)', minWidth: 64, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+              {session ? (countdown != null ? countdown : fmt(elapsed)) : countdown != null ? countdown : '0:00.0'}
+            </span>
+          </div>
+          <div className="dim" style={{ fontSize: 11 }}>
+            Tip: keep peaks in the upper green. Red clips are lost - move further from the mic or lower the input level in the OS.
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+/* ---------- Screen / webcam capture ---------- */
+function CaptureModal({ modal, close }: P) {
+  const kind: 'screen' | 'webcam' = modal.payload?.kind === 'webcam' ? 'webcam' : 'screen';
+  const [session, setSession] = useState<import('../../engine/media/recorder').CaptureSession | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+  const [level, setLevel] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const sessionRef = useRef<typeof session>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  sessionRef.current = session;
+
+  useEffect(() => {
+    if (!session) return;
+    const iv = window.setInterval(() => {
+      const s = sessionRef.current;
+      if (!s) return;
+      setElapsed(s.elapsed());
+      setLevel(s.level() ?? 0);
+    }, 100);
+    return () => window.clearInterval(iv);
+  }, [session]);
+
+  // Attach live preview once a session and a <video> exist.
+  useEffect(() => {
+    if (session && videoRef.current) session.attachPreview(videoRef.current);
+    else if (!session && videoRef.current) videoRef.current.srcObject = null;
+  }, [session]);
+
+  const start = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      const { startCapture } = await import('../../engine/media/recorder');
+      const s = await startCapture(kind);
+      setSession(s);
+      setBusy(false);
+    } catch (e: any) {
+      setBusy(false);
+      if (String(e?.name) === 'NotAllowedError') setError('Permission denied. Allow capture in the browser prompt and try again.');
+      else setError(e?.message ?? String(e));
+    }
+  };
+
+  const stop = async (add: boolean) => {
+    const s = sessionRef.current;
+    if (!s) return close();
+    setBusy(true);
+    const result = await s.stop();
+    setSession(null);
+    if (add) {
+      const { importCapture } = await import('../../engine/media/recorder');
+      const stamp = new Date();
+      const name = kind === 'screen' ? `Screen Recording ${stamp.getHours()}.${stamp.getMinutes()}` : `Webcam ${stamp.getHours()}.${stamp.getMinutes()}`;
+      await importCapture(result, name);
+      toast('success', 'Capture complete', `${result.durationSec.toFixed(1)} s added to the Project panel. Drag it to the timeline.`);
+    }
+    setBusy(false);
+    close();
+  };
+
+  const fmt = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
+
+  return (
+    <Modal title={kind === 'screen' ? 'Record Screen' : 'Record Webcam'} icon={kind === 'screen' ? 'monitor' : 'camera'} onClose={() => (session ? void stop(true) : close())} width={560} footer={
+      <>
+        <span className="dim" style={{ fontSize: 11 }}>{kind === 'screen' ? 'Pick a screen, window or tab in the browser dialog. Audio is optional.' : 'Records camera and mic.'}</span>
+        <span className="spacer" />
+        {session ? (
+          <>
+            <Button onClick={() => void stop(false)} disabled={busy}>Discard</Button>
+            <Button primary onClick={() => void stop(true)} disabled={busy}>Stop &amp; Import</Button>
+          </>
+        ) : (
+          <>
+            <Button onClick={close}>Cancel</Button>
+            <Button primary onClick={() => void start()} disabled={busy}>{busy ? 'Waiting for permission...' : kind === 'screen' ? 'Choose what to capture' : 'Start Recording'}</Button>
+          </>
+        )}
+      </>
+    }>
+      {error ? <div className="empty" style={{ color: 'var(--c-danger)', marginBottom: 10 }}>{error}</div> : null}
+      <div className="cap-stage">
+        {session ? (
+          <>
+            <video ref={videoRef} className="cap-preview" playsInline muted />
+            <div className="cap-live">
+              <span className="rec-dot" /> REC {fmt(elapsed)}
+              <span className="lvl">{level > 0.005 ? 'audio in' : 'no audio'}</span>
+            </div>
+          </>
+        ) : (
+          <div className="dim" style={{ textAlign: 'center', padding: '36px 12px' }}>
+            {kind === 'screen' ? 'The browser will ask what to share once you press the button below.' : 'Grant camera access, then press Start Recording.'}
+          </div>
+        )}
+      </div>
+      <div className="dim" style={{ fontSize: 11, marginTop: 8 }}>
+        Capture runs at up to 30 fps and is saved as WebM in the Project panel. Stop from here or from the browser's own "Stop sharing" bar - both finish the recording safely.
+      </div>
+    </Modal>
+  );
+}
+
+/* ---------- Beat detection ---------- */
+function BeatDetectModal({ close }: P) {
+  const seq = useActiveSequence();
+  const project = useProject((s) => s.project);
+  const sel = useUI((s) => s.selection.clipIds);
+  const [sensitivity, setSensitivity] = useState(0.5);
+  const [bpmMin, setBpmMin] = useState(70);
+  const [result, setResult] = useState<import('../../engine/audio/beats').BeatResult | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [source, setSource] = useState<{ label: string; buffer: AudioBuffer; clip: Clip | null } | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+
+  // Resolve the analysis source: the selected clip with audio, else the first one found.
+  useEffect(() => {
+    if (!seq) return;
+    const selClip = seq.clips.find((c) => c.id === sel[0]);
+    const candidates = [selClip, ...seq.clips.filter((c) => c.id !== selClip?.id)].filter(Boolean) as Clip[];
+    const clip = candidates.find((c) => getMedia(c.assetId)?.audio) ?? null;
+    if (!clip) {
+      setSource(null);
+      setNote('No decoded audio found. Import a music file (or wait for its waveform to appear) and try again.');
+      return;
+    }
+    setNote(null);
+    const buffer = getMedia(clip.assetId)!.audio!;
+    setSource({ label: clip.name, buffer, clip });
+  }, [seq, sel[0], project]);
+
+  // Re-analyze when knobs move (fast: ~50ms for a 3-minute track).
+  useEffect(() => {
+    if (!source) return;
+    let cancelled = false;
+    setAnalyzing(true);
+    const t = window.setTimeout(async () => {
+      const { detectBeats } = await import('../../engine/audio/beats');
+      const r = detectBeats(source.buffer, { sensitivity, minSpacing: 60 / (bpmMin * 2 + 10) });
+      if (!cancelled) {
+        setResult(r);
+        setAnalyzing(false);
+      }
+    }, 120);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, [source, sensitivity, bpmMin]);
+
+  const addMarkers = () => {
+    if (!seq || !result) return;
+    const fps = seq.settings.fps;
+    useProject.getState().update('Detect beats', (p) => {
+      const s = p.sequences.find((x) => x.id === seq.id);
+      if (!s || !source?.clip) return;
+      const clip = s.clips.find((c) => c.id === source.clip!.id);
+      if (!clip) return;
+      let n = 0;
+      for (const t of result.beats) {
+        // Map source time back through the clip's in-point and speed.
+        const localSec = (t - clip.inPoint) / Math.max(0.01, clip.speed);
+        const frame = Math.round(clip.start + localSec * fps);
+        if (frame < clip.start || frame >= E.clipEnd(clip)) continue;
+        s.markers.push({ id: uid('mrk'), time: frame, duration: 0, name: `Beat ${++n}`, comment: result.bpm ? `~${result.bpm} BPM` : '', color: 'green', kind: 'beat' });
+      }
+      s.markers.sort((a, b) => a.time - b.time);
+    });
+    toast('success', 'Beats marked', `${result.beats.length} markers added${result.bpm ? ` (~${result.bpm} BPM)` : ''}. Timeline snapping now locks to them.`);
+    close();
+  };
+
+  return (
+    <Modal title="Detect Beats" icon="beat" onClose={close} width={520} footer={
+      <>
+        <span className="dim" style={{ fontSize: 11 }}>{source ? `Analyzing "${source.label}"` : 'No audio'}</span>
+        <span className="spacer" />
+        <Button onClick={close}>Cancel</Button>
+        <Button primary onClick={addMarkers} disabled={!result || !result.beats.length || analyzing}>Add {result?.beats.length ?? 0} Markers</Button>
+      </>
+    }>
+      {note ? <div className="empty">{note}</div> : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div className="prop-grid">
+            <span className="label">Source</span>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{source?.label}</span>
+            <span className="label">Sensitivity</span>
+            <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <Slider value={sensitivity} min={0} max={1} step={0.05} onChange={(v) => setSensitivity(v)} />
+              <span className="dim" style={{ fontSize: 11 }}>{sensitivity < 0.3 ? 'Only big hits' : sensitivity > 0.7 ? 'Every nuance' : 'Balanced'}</span>
+            </span>
+            <span className="label">Density</span>
+            <Select value={String(bpmMin)} options={[{ value: '60', label: 'Dense (up to ~130 BPM grid)' }, { value: '70', label: 'Normal' }, { value: '90', label: 'Sparse (strong beats only)' }]} onChange={(v) => setBpmMin(Number(v))} />
+          </div>
+          <div className="beat-preview">
+            {analyzing ? (
+              <span className="dim">Analyzing...</span>
+            ) : result ? (
+              <>
+                <span>
+                  <strong>{result.beats.length}</strong>&nbsp;beats
+                  {result.bpm ? <span> - about <strong>{result.bpm} BPM</strong></span> : null}
+                  {result.beats.length ? <span className="dim" style={{ marginLeft: 8 }}>{result.beats[0].toFixed(2)}s ... {result.beats[result.beats.length - 1].toFixed(2)}s</span> : null}
+                </span>
+                <div className="beat-strip">
+                  {result.beats.slice(0, 120).map((t, i) => (
+                    <span key={i} style={{ left: `${(t / (result.beats[result.beats.length - 1] || 1)) * 100}%` }} />
+                  ))}
+                </div>
+              </>
+            ) : (
+              <span className="dim">Waiting for audio...</span>
+            )}
+          </div>
+          <div className="dim" style={{ fontSize: 11 }}>
+            Markers land on the selected clip and snapping picks them up automatically - drag cut points and they lock to the beat.
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+/* ---------- Remove Silence ---------- */
+function RemoveSilenceModal({ close }: P) {
+  const seq = useActiveSequence();
+  const sel = useUI((s) => s.selection.clipIds);
+  const [sensitivity, setSensitivity] = useState(10);
+  const [minSilence, setMinSilence] = useState(0.45);
+  const [padding, setPadding] = useState(0.15);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [result, setResult] = useState<import('../../engine/audio/silence').SilenceResult | null>(null);
+  const [source, setSource] = useState<{ label: string; clipId: string | null } | null>(null);
+  const [srcDur, setSrcDur] = useState(0);
+  const [note, setNote] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!seq) return;
+    const clip = pickAudioClip(seq);
+    if (!clip) {
+      setSource(null);
+      setNote('No clip with decoded audio found. Import a clip (or wait for its waveform) and try again.');
+      return;
+    }
+    setNote(null);
+    setSource({ label: clip.name, clipId: clip.id });
+  }, [seq, sel[0]]);
+
+  useEffect(() => {
+    if (!seq || !source?.clipId) return;
+    const clip = seq.clips.find((c) => c.id === source.clipId);
+    const buffer = clip ? getMedia(clip.assetId)?.audio : undefined;
+    if (!buffer) return;
+    setSrcDur(buffer.duration);
+    let cancelled = false;
+    setAnalyzing(true);
+    const t = window.setTimeout(async () => {
+      const { detectSilence } = await import('../../engine/audio/silence');
+      const r = detectSilence(buffer, { sensitivity, minSilence, padding });
+      if (!cancelled) {
+        setResult(r);
+        setAnalyzing(false);
+      }
+    }, 120);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, [seq, source?.clipId, sensitivity, minSilence, padding]);
+
+  const removable = result ? result.silences.reduce((a, [s0, e0]) => a + (e0 - s0), 0) : 0;
+
+  const apply = () => {
+    cmd.removeSilence({ sensitivity, minSilence, padding }, result, source?.clipId ?? null);
+    close();
+  };
+
+  return (
+    <Modal title="Remove Silence" icon="wave" onClose={close} width={540} footer={
+      <>
+        <span className="dim" style={{ fontSize: 11 }}>{source ? `Editing "${source.label}"` : 'No audio'}</span>
+        <span className="spacer" />
+        <Button onClick={close}>Cancel</Button>
+        <Button primary onClick={apply} disabled={!result || !result.silences.length || analyzing}>Remove {result?.silences.length ?? 0} Silences</Button>
+      </>
+    }>
+      {note ? <div className="empty">{note}</div> : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div className="prop-grid">
+            <span className="label">Source</span>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{source?.label}</span>
+            <span className="label">Sensitivity</span>
+            <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <Slider value={sensitivity} min={3} max={30} step={1} onChange={(v) => setSensitivity(v)} />
+              <span className="dim" style={{ fontSize: 11 }}>+{sensitivity} dB over noise floor</span>
+            </span>
+            <span className="label">Min silence</span>
+            <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <Slider value={minSilence} min={0.2} max={2} step={0.05} onChange={(v) => setMinSilence(v)} />
+              <span className="dim" style={{ fontSize: 11 }}>{minSilence.toFixed(2)}s</span>
+            </span>
+            <span className="label">Padding</span>
+            <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <Slider value={padding} min={0} max={0.4} step={0.01} onChange={(v) => setPadding(v)} />
+              <span className="dim" style={{ fontSize: 11 }}>{padding.toFixed(2)}s kept around speech</span>
+            </span>
+          </div>
+          <div className="beat-preview">
+            {analyzing ? (
+              <span className="dim">Analyzing...</span>
+            ) : result ? (
+              <>
+                <span>
+                  <strong>{result.silences.length}</strong>&nbsp;silences
+                  {result.silences.length ? <span> - about <strong>{removable.toFixed(1)}s</strong> removable <span className="dim">(threshold {result.thresholdDb.toFixed(0)} dBFS)</span></span> : null}
+                </span>
+                <div className="beat-strip">
+                  {result.silences.slice(0, 120).map(([s0, e0], i) => (
+                    <span key={i} style={{ left: `${(s0 / (srcDur || 1)) * 100}%`, width: `${Math.max(0.5, ((e0 - s0) / (srcDur || 1)) * 100)}%` }} />
+                  ))}
+                </div>
+              </>
+            ) : (
+              <span className="dim">Waiting for audio...</span>
+            )}
+          </div>
+          <div className="dim" style={{ fontSize: 11 }}>
+            Cuts the silent spans out of the clip and ripples the gaps closed. Linked audio and video are cut together. One undo step.
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+/* ---------- Ken Burns (Pan & Zoom) ---------- */
+function KenBurnsModal({ close }: P) {
+  const [preset, setPreset] = useState<'zoomIn' | 'zoomOut' | 'panLeft' | 'panRight' | 'auto'>('auto');
+  const [strength, setStrength] = useState(5);
+  const apply = () => {
+    cmd.kenBurns(preset, strength);
+    close();
+  };
+  const desc: Record<typeof preset, string> = {
+    zoomIn: 'Starts wide, pushes in over the clip',
+    zoomOut: 'Starts tight, eases out over the clip',
+    panLeft: 'Drifts the framing left',
+    panRight: 'Drifts the framing right',
+    auto: 'A different move per clip - great over a batch of photos',
+  };
+  return (
+    <Modal title="Pan & Zoom" icon="keyframe" onClose={close} width={480} footer={
+      <>
+        <span className="dim" style={{ fontSize: 11 }}>Applies to the selection (or all video clips)</span>
+        <span className="spacer" />
+        <Button onClick={close}>Cancel</Button>
+        <Button primary onClick={apply}>Apply</Button>
+      </>
+    }>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div className="prop-grid">
+          <span className="label">Move</span>
+          <Select value={preset} options={[
+            { value: 'auto', label: 'Auto (varied per clip)' },
+            { value: 'zoomIn', label: 'Zoom In' },
+            { value: 'zoomOut', label: 'Zoom Out' },
+            { value: 'panLeft', label: 'Pan Left' },
+            { value: 'panRight', label: 'Pan Right' },
+          ]} onChange={(v) => setPreset(v as any)} />
+          <span className="label">Strength</span>
+          <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <Slider value={strength} min={1} max={10} step={1} onChange={(v) => setStrength(v)} />
+            <span className="dim" style={{ fontSize: 11 }}>{preset === 'panLeft' || preset === 'panRight' ? `${(strength * 0.8).toFixed(1)}% drift` : `${(strength * 1.8).toFixed(1)}% zoom`}</span>
+          </span>
+        </div>
+        <div className="beat-preview"><span className="dim">{desc[preset]}</span></div>
+        <div className="dim" style={{ fontSize: 11 }}>
+          Writes scale / position keyframes with an ease - open Effect Controls to fine-tune. Existing motion keyframes on those two params are replaced.
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/* ---------- Auto Reframe ---------- */
+function AutoReframeModal({ close }: P) {
+  const [target, setTarget] = useState<'9:16' | '1:1' | '4:5' | '16:9'>('9:16');
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<string | null>(null);
+  const run = async () => {
+    setBusy(true);
+    try {
+      await cmd.autoReframe(target, (label, done, total) => setProgress(`${label} (${Math.round((done / Math.max(1, total)) * 100)}%)`));
+    } finally {
+      setBusy(false);
+      setProgress(null);
+    }
+    close();
+  };
+  return (
+    <Modal title="Auto Reframe" icon="film" onClose={close} width={480} footer={
+      <>
+        <span className="dim" style={{ fontSize: 11 }}>{progress ?? 'Creates a reframed copy - original stays untouched'}</span>
+        <span className="spacer" />
+        <Button onClick={close} disabled={busy}>Cancel</Button>
+        <Button primary onClick={run} disabled={busy}>{busy ? 'Analyzing...' : 'Reframe'}</Button>
+      </>
+    }>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div className="prop-grid">
+          <span className="label">Aspect ratio</span>
+          <Select value={target} options={[
+            { value: '9:16', label: '9:16 Vertical (Shorts / TikTok / Reels)' },
+            { value: '1:1', label: '1:1 Square' },
+            { value: '4:5', label: '4:5 Portrait (Instagram feed)' },
+            { value: '16:9', label: '16:9 Horizontal (YouTube)' },
+          ]} onChange={(v) => setTarget(v as any)} />
+        </div>
+        <div className="beat-preview"><span className="dim">Each clip is scaled to fill the new frame and keyframed to follow where the action is; static scenes stay centered.</span></div>
+        <div className="dim" style={{ fontSize: 11 }}>
+          Analysis renders each clip at low resolution every half second - a minute-long sequence takes a few seconds.
         </div>
       </div>
     </Modal>
