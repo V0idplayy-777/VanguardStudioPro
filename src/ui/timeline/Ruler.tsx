@@ -3,12 +3,13 @@ import type { Sequence } from '../../types/project';
 import { rulerIntervals, formatTime } from '../../engine/timecode';
 import { useUI } from '../../state/uiStore';
 import { useProject } from '../../state/projectStore';
+import { usePlayback } from '../../engine/playback/playback';
 import { usePointerDrag } from '../controls';
 import { cmd } from '../../app/commands';
 
 import { markerColor } from '../../types/project';
 
-export function Ruler({ seq, ppf, scrollFrame, width, onPointerDown, playheadX }: { seq: Sequence; ppf: number; scrollFrame: number; width: number; onPointerDown: (e: React.PointerEvent) => void; playheadX: number }) {
+export function Ruler({ seq, ppf, scrollFrame, width, onPointerDown }: { seq: Sequence; ppf: number; scrollFrame: number; width: number; onPointerDown: (e: React.PointerEvent) => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const mode = useUI((s) => s.timecodeMode);
   const selMarkers = useUI((s) => s.selection.markerIds);
@@ -135,7 +136,7 @@ export function Ruler({ seq, ppf, scrollFrame, width, onPointerDown, playheadX }
           onDoubleClick={(e) => { e.stopPropagation(); useUI.getState().openModal({ kind: 'markerEdit', payload: { markerId: m.id } }); }}
         />
       ))}
-      <div className="ph-head" style={{ left: playheadX }} />
+      <RulerPlayhead fx={fx} />
     </div>
   );
 }
@@ -144,4 +145,11 @@ export function Ruler({ seq, ppf, scrollFrame, width, onPointerDown, playheadX }
 function shortTc(label: string, major: number, fps: number) {
   if (major >= fps * 60) return label;
   return label.replace(/^00:/, '');
+}
+
+
+/** Playhead head in the ruler; subscribes so frame moves never re-render Ruler. */
+function RulerPlayhead({ fx }: { fx: (f: number) => number }) {
+  const ph = usePlayback((s) => s.playhead);
+  return <div className="ph-head" style={{ left: fx(ph) }} />;
 }

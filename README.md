@@ -30,13 +30,16 @@ To host somewhere else, run `npm run build` and copy `dist/` to any static file 
 **Editing**
 - Dockable workspace: drag tabs between groups, split, float, maximise (backtick), nine preset workspaces plus your own saved layouts.
 - Timeline with unlimited video and audio tracks, insert/overwrite, three-point editing from the Source monitor, lift/extract, ripple/rolling/slip/slide/rate-stretch tools, razor, snapping, track targeting, sync lock, linked selection, grouping, nesting, gap closing, clip markers.
-- Frame-accurate transport: J/K/L shuttle, loop, In/Out, sequence markers, chapter markers, timecode/frames/seconds display, drop-frame timecode. Playback is flicker-free: render jobs are serialized and each finished frame is presented from a private snapshot, so thumbnails, source-monitor and export renders can never blank or tear the Program Monitor.
+- **Cut to Beats**: razor every clip on the beat markers (detecting them first when needed) so edits land on the rhythm.
+- **Pan & Zoom (Ken Burns)**: one click writes eased scale/position keyframes - Auto mode gives every photo a different move.
+- Frame-accurate transport: J/K/L shuttle, loop, In/Out, sequence markers, chapter markers, timecode/frames/seconds display, drop-frame timecode. Playback is flicker-free: render jobs are serialized and each finished frame is presented from a private snapshot, so thumbnails, source-monitor and export renders can never blank or tear the Program Monitor. It is also smooth under load: sequential decoding fast-forwards instead of re-seeking, the next frame decodes ahead while the current one renders, thumbnails and scrubbing use a separate decode session, and the playhead glides over coarse audio clocks (long Bluetooth buffers).
 - Speed/duration with reverse and pitch preservation, frame hold, time remapping with speed ramps.
 - Full undo history with a browsable History panel.
 
 **Effects and colour**
 - 60+ GPU video effects (blur, sharpen, keying, distortion, stylise, generate, transitions) with keyframes, bezier easing, masks and track mattes.
 - Lumetri Color: basic correction, creative looks, curves, colour wheels, HSL secondary, vignette, plus scopes (waveform, vectorscope, parade, histogram) and one-click Color Match.
+- **Auto Reframe**: reframe a sequence to 9:16 / 1:1 / 4:5 / 16:9 - every clip is scaled to fill and keyframed to follow the action.
 - Adjustment layers, colour mattes, bars and tone, universal counting leader.
 - Effect presets, saved per browser, importable and exportable.
 
@@ -44,6 +47,8 @@ To host somewhere else, run `npm run build` and copy `dist/` to any static file 
 - Track mixer and clip mixer with faders, pans, mutes, solos, per-track effect inserts, master fader, true-peak and loudness meters.
 - Audio effects: EQ, compressor, limiter, gate, reverb, delay, chorus, de-esser, and more. Auto-ducking writes volume keyframes under dialogue.
 - Rubber-band volume and pan keyframes drawn straight on the clip.
+- **Remove Silence**: detect and cut out silent spans (adaptive noise-floor threshold, adjustable padding) with the gaps rippled closed - linked audio/video cut together, one undo step.
+- **Normalize Audio**: measures integrated LUFS (K-weighted, gated) per clip and trims clip gain to hit -14 LUFS.
 
 **Graphics and captions**
 - Essential Graphics: text, shapes, layer stacks, transforms with keyframes, in/out animations, a template browser.

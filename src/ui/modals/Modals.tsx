@@ -5,7 +5,7 @@ import { usePlayback, renderFrameToCanvas } from '../../engine/playback/playback
 import { useLayout } from '../../state/layoutStore';
 import { Modal, Button, Select, Checkbox, HotText, TextField, TextArea, TimecodeField, ColorChip, Segmented, Kbd, Slider } from '../controls';
 import { Icon, Swatch, type IconName } from '../icons';
-import { cmd } from '../../app/commands';
+import { cmd, pickAudioClip } from '../../app/commands';
 import { SHORTCUTS } from '../../app/shortcuts';
 import { ExportPanel } from '../panels/ExportPanel';
 import { LABEL_COLORS, MARKER_COLORS, DEFAULT_SEQUENCE_SETTINGS, type LabelColor, type Marker, type MarkerKind, type SequenceSettings, type Clip } from '../../types/project';
@@ -99,6 +99,12 @@ export function ModalHost() {
       return <CaptureModal {...props} />;
     case 'beatDetect':
       return <BeatDetectModal {...props} />;
+    case 'removeSilence':
+      return <RemoveSilenceModal {...props} />;
+    case 'kenBurns':
+      return <KenBurnsModal {...props} />;
+    case 'autoReframe':
+      return <AutoReframeModal {...props} />;
     default:
       return null;
   }
@@ -558,7 +564,7 @@ function MarkerModal({ modal, close }: P) {
     });
     close();
   };
-  const kinds: { value: MarkerKind; label: string }[] = [{ value: 'comment', label: 'Comment Marker' }, { value: 'chapter', label: 'Chapter Marker' }, { value: 'segmentation', label: 'Segmentation Marker' }, { value: 'webLink', label: 'Web Link' }, { value: 'flashCue', label: 'Flash Cue Point' }];
+  const kinds: { value: MarkerKind; label: string }[] = [{ value: 'comment', label: 'Comment Marker' }, { value: 'chapter', label: 'Chapter Marker' }, { value: 'segmentation', label: 'Segmentation Marker' }, { value: 'webLink', label: 'Web Link' }, { value: 'flashCue', label: 'Flash Cue Point' }, { value: 'beat', label: 'Beat Marker' }];
   void project;
   return (
     <Modal title={owner ? 'Clip Marker' : 'Sequence Marker'} icon="marker" onClose={ok} width={460} footer={<><Button danger onClick={del}>Delete</Button><span className="spacer" /><Button onClick={() => go(-1)} disabled={idx <= 0}>Previous</Button><Button onClick={() => go(1)} disabled={idx >= all.length - 1}>Next</Button><Button primary onClick={ok}>OK</Button></>}>
@@ -1786,7 +1792,7 @@ function BeatDetectModal({ close }: P) {
         const localSec = (t - clip.inPoint) / Math.max(0.01, clip.speed);
         const frame = Math.round(clip.start + localSec * fps);
         if (frame < clip.start || frame >= E.clipEnd(clip)) continue;
-        s.markers.push({ id: uid('mrk'), time: frame, duration: 0, name: `Beat ${++n}`, comment: result.bpm ? `~${result.bpm} BPM` : '', color: 'green', kind: 'flashCue' });
+        s.markers.push({ id: uid('mrk'), time: frame, duration: 0, name: `Beat ${++n}`, comment: result.bpm ? `~${result.bpm} BPM` : '', color: 'green', kind: 'beat' });
       }
       s.markers.sort((a, b) => a.time - b.time);
     });
@@ -1841,6 +1847,210 @@ function BeatDetectModal({ close }: P) {
           </div>
         </div>
       )}
+    </Modal>
+  );
+}
+
+/* ---------- Remove Silence ---------- */
+function RemoveSilenceModal({ close }: P) {
+  const seq = useActiveSequence();
+  const sel = useUI((s) => s.selection.clipIds);
+  const [sensitivity, setSensitivity] = useState(10);
+  const [minSilence, setMinSilence] = useState(0.45);
+  const [padding, setPadding] = useState(0.15);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [result, setResult] = useState<import('../../engine/audio/silence').SilenceResult | null>(null);
+  const [source, setSource] = useState<{ label: string; clipId: string | null } | null>(null);
+  const [srcDur, setSrcDur] = useState(0);
+  const [note, setNote] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!seq) return;
+    const clip = pickAudioClip(seq);
+    if (!clip) {
+      setSource(null);
+      setNote('No clip with decoded audio found. Import a clip (or wait for its waveform) and try again.');
+      return;
+    }
+    setNote(null);
+    setSource({ label: clip.name, clipId: clip.id });
+  }, [seq, sel[0]]);
+
+  useEffect(() => {
+    if (!seq || !source?.clipId) return;
+    const clip = seq.clips.find((c) => c.id === source.clipId);
+    const buffer = clip ? getMedia(clip.assetId)?.audio : undefined;
+    if (!buffer) return;
+    setSrcDur(buffer.duration);
+    let cancelled = false;
+    setAnalyzing(true);
+    const t = window.setTimeout(async () => {
+      const { detectSilence } = await import('../../engine/audio/silence');
+      const r = detectSilence(buffer, { sensitivity, minSilence, padding });
+      if (!cancelled) {
+        setResult(r);
+        setAnalyzing(false);
+      }
+    }, 120);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, [seq, source?.clipId, sensitivity, minSilence, padding]);
+
+  const removable = result ? result.silences.reduce((a, [s0, e0]) => a + (e0 - s0), 0) : 0;
+
+  const apply = () => {
+    cmd.removeSilence({ sensitivity, minSilence, padding }, result, source?.clipId ?? null);
+    close();
+  };
+
+  return (
+    <Modal title="Remove Silence" icon="wave" onClose={close} width={540} footer={
+      <>
+        <span className="dim" style={{ fontSize: 11 }}>{source ? `Editing "${source.label}"` : 'No audio'}</span>
+        <span className="spacer" />
+        <Button onClick={close}>Cancel</Button>
+        <Button primary onClick={apply} disabled={!result || !result.silences.length || analyzing}>Remove {result?.silences.length ?? 0} Silences</Button>
+      </>
+    }>
+      {note ? <div className="empty">{note}</div> : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div className="prop-grid">
+            <span className="label">Source</span>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{source?.label}</span>
+            <span className="label">Sensitivity</span>
+            <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <Slider value={sensitivity} min={3} max={30} step={1} onChange={(v) => setSensitivity(v)} />
+              <span className="dim" style={{ fontSize: 11 }}>+{sensitivity} dB over noise floor</span>
+            </span>
+            <span className="label">Min silence</span>
+            <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <Slider value={minSilence} min={0.2} max={2} step={0.05} onChange={(v) => setMinSilence(v)} />
+              <span className="dim" style={{ fontSize: 11 }}>{minSilence.toFixed(2)}s</span>
+            </span>
+            <span className="label">Padding</span>
+            <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <Slider value={padding} min={0} max={0.4} step={0.01} onChange={(v) => setPadding(v)} />
+              <span className="dim" style={{ fontSize: 11 }}>{padding.toFixed(2)}s kept around speech</span>
+            </span>
+          </div>
+          <div className="beat-preview">
+            {analyzing ? (
+              <span className="dim">Analyzing...</span>
+            ) : result ? (
+              <>
+                <span>
+                  <strong>{result.silences.length}</strong>&nbsp;silences
+                  {result.silences.length ? <span> - about <strong>{removable.toFixed(1)}s</strong> removable <span className="dim">(threshold {result.thresholdDb.toFixed(0)} dBFS)</span></span> : null}
+                </span>
+                <div className="beat-strip">
+                  {result.silences.slice(0, 120).map(([s0, e0], i) => (
+                    <span key={i} style={{ left: `${(s0 / (srcDur || 1)) * 100}%`, width: `${Math.max(0.5, ((e0 - s0) / (srcDur || 1)) * 100)}%` }} />
+                  ))}
+                </div>
+              </>
+            ) : (
+              <span className="dim">Waiting for audio...</span>
+            )}
+          </div>
+          <div className="dim" style={{ fontSize: 11 }}>
+            Cuts the silent spans out of the clip and ripples the gaps closed. Linked audio and video are cut together. One undo step.
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+/* ---------- Ken Burns (Pan & Zoom) ---------- */
+function KenBurnsModal({ close }: P) {
+  const [preset, setPreset] = useState<'zoomIn' | 'zoomOut' | 'panLeft' | 'panRight' | 'auto'>('auto');
+  const [strength, setStrength] = useState(5);
+  const apply = () => {
+    cmd.kenBurns(preset, strength);
+    close();
+  };
+  const desc: Record<typeof preset, string> = {
+    zoomIn: 'Starts wide, pushes in over the clip',
+    zoomOut: 'Starts tight, eases out over the clip',
+    panLeft: 'Drifts the framing left',
+    panRight: 'Drifts the framing right',
+    auto: 'A different move per clip - great over a batch of photos',
+  };
+  return (
+    <Modal title="Pan & Zoom" icon="keyframe" onClose={close} width={480} footer={
+      <>
+        <span className="dim" style={{ fontSize: 11 }}>Applies to the selection (or all video clips)</span>
+        <span className="spacer" />
+        <Button onClick={close}>Cancel</Button>
+        <Button primary onClick={apply}>Apply</Button>
+      </>
+    }>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div className="prop-grid">
+          <span className="label">Move</span>
+          <Select value={preset} options={[
+            { value: 'auto', label: 'Auto (varied per clip)' },
+            { value: 'zoomIn', label: 'Zoom In' },
+            { value: 'zoomOut', label: 'Zoom Out' },
+            { value: 'panLeft', label: 'Pan Left' },
+            { value: 'panRight', label: 'Pan Right' },
+          ]} onChange={(v) => setPreset(v as any)} />
+          <span className="label">Strength</span>
+          <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <Slider value={strength} min={1} max={10} step={1} onChange={(v) => setStrength(v)} />
+            <span className="dim" style={{ fontSize: 11 }}>{preset === 'panLeft' || preset === 'panRight' ? `${(strength * 0.8).toFixed(1)}% drift` : `${(strength * 1.8).toFixed(1)}% zoom`}</span>
+          </span>
+        </div>
+        <div className="beat-preview"><span className="dim">{desc[preset]}</span></div>
+        <div className="dim" style={{ fontSize: 11 }}>
+          Writes scale / position keyframes with an ease - open Effect Controls to fine-tune. Existing motion keyframes on those two params are replaced.
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/* ---------- Auto Reframe ---------- */
+function AutoReframeModal({ close }: P) {
+  const [target, setTarget] = useState<'9:16' | '1:1' | '4:5' | '16:9'>('9:16');
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<string | null>(null);
+  const run = async () => {
+    setBusy(true);
+    try {
+      await cmd.autoReframe(target, (label, done, total) => setProgress(`${label} (${Math.round((done / Math.max(1, total)) * 100)}%)`));
+    } finally {
+      setBusy(false);
+      setProgress(null);
+    }
+    close();
+  };
+  return (
+    <Modal title="Auto Reframe" icon="film" onClose={close} width={480} footer={
+      <>
+        <span className="dim" style={{ fontSize: 11 }}>{progress ?? 'Creates a reframed copy - original stays untouched'}</span>
+        <span className="spacer" />
+        <Button onClick={close} disabled={busy}>Cancel</Button>
+        <Button primary onClick={run} disabled={busy}>{busy ? 'Analyzing...' : 'Reframe'}</Button>
+      </>
+    }>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div className="prop-grid">
+          <span className="label">Aspect ratio</span>
+          <Select value={target} options={[
+            { value: '9:16', label: '9:16 Vertical (Shorts / TikTok / Reels)' },
+            { value: '1:1', label: '1:1 Square' },
+            { value: '4:5', label: '4:5 Portrait (Instagram feed)' },
+            { value: '16:9', label: '16:9 Horizontal (YouTube)' },
+          ]} onChange={(v) => setTarget(v as any)} />
+        </div>
+        <div className="beat-preview"><span className="dim">Each clip is scaled to fill the new frame and keyframed to follow where the action is; static scenes stay centered.</span></div>
+        <div className="dim" style={{ fontSize: 11 }}>
+          Analysis renders each clip at low resolution every half second - a minute-long sequence takes a few seconds.
+        </div>
+      </div>
     </Modal>
   );
 }

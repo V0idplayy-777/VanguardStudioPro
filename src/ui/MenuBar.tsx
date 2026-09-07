@@ -187,6 +187,9 @@ export function MenuBar() {
         { label: 'Speed / Duration...', shortcut: sc('speed'), disabled: !hasSel, onSelect: () => cmd.speedDuration() },
         { label: 'Scene Edit Detection...', disabled: !hasSel, onSelect: () => openModal({ kind: 'sceneDetect' }) },
         { label: 'Auto Color', disabled: !hasSel, onSelect: () => void cmd.autoColorSelection() },
+        { label: 'Pan & Zoom (Ken Burns)...', disabled: !hasSel, onSelect: () => openModal({ kind: 'kenBurns' }) },
+        { label: 'Normalize Audio (-14 LUFS)', disabled: !hasSel, onSelect: () => void cmd.normalizeAudio() },
+        { label: 'Remove Silence...', disabled: !hasSel, onSelect: () => openModal({ kind: 'removeSilence' }) },
         { separator: true },
         { label: 'Remove Effects', disabled: !hasSel, onSelect: () => cmd.removeEffects(selectedClipIds()) },
         { label: 'Reveal in Project', disabled: !hasSel, onSelect: () => cmd.revealInProject() },
@@ -224,6 +227,8 @@ export function MenuBar() {
         { label: 'Loop Playback', shortcut: sc('loop'), checked: usePlayback.getState().loop, onSelect: () => usePlayback.getState().setLoop(!usePlayback.getState().loop) },
         { separator: true },
         { label: 'Detect Beats...', onSelect: () => openModal({ kind: 'beatDetect' }) },
+        { label: 'Cut to Beats', onSelect: () => void cmd.cutToBeats() },
+        { label: 'Auto Reframe...', onSelect: () => openModal({ kind: 'autoReframe' }) },
       ],
     },
     {

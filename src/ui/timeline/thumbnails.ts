@@ -98,10 +98,13 @@ export async function thumbnailFor(clip: Clip, asset: MediaAsset | undefined, sr
         return bmp;
       }
       if (rec.video) {
-        const frame = await rec.video.getFrame(Math.min(Math.max(0, q), Math.max(0, rec.video.duration - 0.05)));
+        // Random-access seeks here must not re-seq the sequential decode
+        // iterator the program monitor plays through — use the scratch session.
+        const { getScratchVideo } = await import('../../engine/media/mediaStore');
+        const v = (await getScratchVideo(rec).catch(() => null)) ?? rec.video;
+        const frame = await v.getFrame(Math.min(Math.max(0, q), Math.max(0, v.duration - 0.05)));
         if (!frame) return null;
         const bmp = await createImageBitmap(frame as any, { resizeHeight: bucketH, resizeWidth: Math.max(2, bw), resizeQuality: 'low' });
-        if (frame instanceof VideoFrame) frame.close();
         put(key, bmp);
         return bmp;
       }

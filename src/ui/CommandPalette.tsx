@@ -110,7 +110,12 @@ function buildItems(): Item[] {
   C('screenRecord', 'Record Screen...', () => ui.openModal({ kind: 'capture', payload: { kind: 'screen' } }), 'Capture', 'Capture a window or screen into the project');
   C('webcamRecord', 'Record Webcam...', () => ui.openModal({ kind: 'capture', payload: { kind: 'webcam' } }), 'Capture');
   C('beatDetect', 'Detect Beats...', () => ui.openModal({ kind: 'beatDetect' }), 'Audio', 'Mark the beats of a music clip for cutting on rhythm');
+  C('cutToBeats', 'Cut to Beats', () => void cmd.cutToBeats(), 'Audio', 'Razor clips at every beat marker (detects beats first when needed)');
+  C('removeSilence', 'Remove Silence...', () => ui.openModal({ kind: 'removeSilence' }), 'Audio', 'Cut silent spans out of a talking clip and ripple the gaps closed');
+  C('normalizeAudio', 'Normalize Audio Levels', () => void cmd.normalizeAudio(), 'Audio', 'Measure loudness and set clip gain to hit -14 LUFS');
   C('autoColor', 'Auto Color Selection', () => void cmd.autoColorSelection(), 'Color', 'One-click contrast and white balance fix');
+  C('kenBurns', 'Pan & Zoom (Ken Burns)...', () => ui.openModal({ kind: 'kenBurns' }), 'Editing', 'Animated zoom / pan across clips and photos');
+  C('autoReframe', 'Auto Reframe...', () => ui.openModal({ kind: 'autoReframe' }), 'Editing', 'Reframe the sequence to 9:16 / 1:1 / 4:5 tracking the action');
   C('sceneDetect', 'Scene Detection...', () => ui.openModal({ kind: 'sceneDetect' }), 'Color');
   C('duck', 'Auto Duck Music...', () => ui.openModal({ kind: 'autoDucking' }), 'Audio');
   C('shortcuts', 'Keyboard Shortcuts', () => ui.openModal({ kind: 'keyboardShortcuts' }), 'Help');

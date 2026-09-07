@@ -94,7 +94,10 @@ export interface ModalRequest {
     | 'easter'
     | 'recordVoiceover'
     | 'capture'
-    | 'beatDetect';
+    | 'beatDetect'
+    | 'removeSilence'
+    | 'kenBurns'
+    | 'autoReframe';
   payload?: any;
 }
 

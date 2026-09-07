@@ -63,6 +63,8 @@ export class Compositor {
   private blackTex: WebGLTexture;
   private whiteMaskTex: WebGLTexture;
   frameCounter = 0;
+  /** Hysteresis counter for shrinking the present canvas. */
+  private smallPresents = 0;
   /** Set true when a texture had to be substituted because media was not ready. */
   lastFrameIncomplete = false;
   onShaderError?: (msg: string) => void;
@@ -695,15 +697,36 @@ export class Compositor {
     return out;
   }
 
-  /** Draw a render target to the canvas (default framebuffer). */
+  /** Draw a render target to the canvas (default framebuffer).
+   *  The present canvas only ever GROWS: interleaved consumers (program
+   *  monitor at full res, thumbnails / export previews at reduced res) used
+   *  to resize it twice per cycle, forcing a reallocation + repaint of the
+   *  shared WebGL canvas on every frame. Smaller frames are letterboxed into
+   *  the top-left corner and copied out with a source rect. */
   present(rt: RenderTarget, opts: { bg?: [number, number, number]; channel?: number; checker?: boolean; viewport?: { x: number; y: number; w: number; h: number } } = {}) {
     const gl = this.gl;
+    if (this.canvas.width < rt.width || this.canvas.height < rt.height) {
+      this.canvas.width = Math.max(this.canvas.width, rt.width);
+      this.canvas.height = Math.max(this.canvas.height, rt.height);
+      this.smallPresents = 0;
+    } else if (rt.width * 2 <= this.canvas.width && rt.height * 2 <= this.canvas.height) {
+      // Frames have been much smaller than the canvas for a while (e.g. the
+      // early full-res render that sized it came from a different sequence) —
+      // shrink so presents stop rasterizing dead pixels.
+      if (++this.smallPresents >= 4) {
+        this.canvas.width = rt.width;
+        this.canvas.height = rt.height;
+        this.smallPresents = 0;
+      }
+    } else {
+      this.smallPresents = 0;
+    }
     const cw = this.canvas.width,
       ch = this.canvas.height;
     this.core.bindTarget(null, cw, ch);
     gl.clearColor(0.06, 0.06, 0.06, 1);
     gl.clear(gl.COLOR_BUFFER_BIT);
-    const vp = opts.viewport ?? { x: 0, y: 0, w: cw, h: ch };
+    const vp = opts.viewport ?? { x: 0, y: 0, w: rt.width, h: rt.height };
     gl.viewport(vp.x, ch - vp.y - vp.h, vp.w, vp.h);
     const prog = this.core.program('present', PRESENT_FRAG);
     gl.useProgram(prog);
@@ -764,19 +787,15 @@ export class Compositor {
 
   /** Copy a render target to a 2D canvas (for export / thumbnails). */
   drawToCanvas(rt: RenderTarget, target: HTMLCanvasElement | OffscreenCanvas, bg: [number, number, number] = [0, 0, 0]) {
-    const cw = this.canvas.width,
-      ch = this.canvas.height;
-    if (cw !== rt.width || ch !== rt.height) {
-      this.canvas.width = rt.width;
-      this.canvas.height = rt.height;
-    }
     this.present(rt, { bg });
     const ctx = target.getContext('2d') as CanvasRenderingContext2D;
     if (target.width !== rt.width || target.height !== rt.height) {
       target.width = rt.width;
       target.height = rt.height;
     }
-    ctx.drawImage(this.canvas as CanvasImageSource, 0, 0);
+    // Source rect: the frame is letterboxed top-left in the (possibly larger) present canvas.
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(this.canvas as CanvasImageSource, 0, 0, rt.width, rt.height, 0, 0, rt.width, rt.height);
   }
 
   release(rt: RenderTarget | null) {

@@ -47,8 +47,11 @@ export function TimelinePanel() {
   const setLinked = useUI((s) => s.setLinkedSelection);
   const selection = useUI((s) => s.selection);
   const ui = useUI;
-  const playhead = usePlayback((s) => s.playhead);
   const setPlayhead = usePlayback((s) => s.setPlayhead);
+  // NOTE: no `playhead` subscription here on purpose — during playback it
+  // changes 30-60x/s and would re-render the entire timeline. Per-frame UI
+  // (playhead marker, ruler head, timecode) subscribes via micro components
+  // below; imperative code reads usePlayback.getState().playhead.
   const view = useTimelineView();
   const { pixelsPerFrame: ppf, scrollFrame, scrollY } = view;
   const [lanesRef, lanesSize] = useElementSize<HTMLDivElement>();
@@ -101,25 +104,32 @@ export function TimelinePanel() {
     [layout, scrollY],
   );
 
-  // Keep the playhead visible during playback
+  // Keep the playhead visible during playback (subscription, no re-render).
+  // Pages by half a lane when the playhead reaches the edge instead of
+  // following it continuously — a scroll change re-renders the timeline, and
+  // doing that on every frame made playback juddery on big timelines.
   const playing = usePlayback((s) => s.playing);
   useEffect(() => {
     if (!playing || !laneWidth) return;
-    const x = frameToX(playhead);
-    if (x > laneWidth - 20) view.setScroll(playhead - 20 / ppf);
-    else if (x < 0) view.setScroll(playhead);
-  }, [playhead, playing, laneWidth, frameToX, ppf]);
+    return usePlayback.subscribe((st, prev) => {
+      if (st.playhead === prev.playhead) return;
+      const ph = st.playhead;
+      const x = frameToX(ph);
+      if (x > laneWidth - 20) view.setScroll(ph - laneWidth / (2 * ppf));
+      else if (x < 0) view.setScroll(ph);
+    });
+  }, [playing, laneWidth, frameToX, ppf]);
 
   // Zoom events from shortcuts
   useEffect(
     () =>
       onTimelineEvent((e) => {
         if (!seq) return;
-        if (e.type === 'zoom') zoomAround(e.factor, frameToX(playhead));
+        if (e.type === 'zoom') zoomAround(e.factor, frameToX(usePlayback.getState().playhead));
         if (e.type === 'zoomFit') zoomToFit();
         if (e.type === 'scrollTo') view.setScroll(e.frame);
       }),
-    [seq, playhead, frameToX, laneWidth],
+    [seq, frameToX, laneWidth],
   );
 
   const zoomAround = (factor: number, anchorX: number) => {
@@ -146,10 +156,10 @@ export function TimelinePanel() {
       const on = snapping !== shiftHeld; // shift inverts
       if (!on) return { frame, snapped: false, to: null };
       const tol = 8 / ppf;
-      const cands = E.snapCandidates(seq, exclude, playhead);
+      const cands = E.snapCandidates(seq, exclude, usePlayback.getState().playhead);
       return E.snapFrame(frame, cands, tol);
     },
-    [seq, snapping, ppf, playhead],
+    [seq, snapping, ppf],
   );
 
   /* ---------- pointer handling ---------- */
@@ -967,7 +977,7 @@ export function TimelinePanel() {
     }
     if (clip.assetId) {
       ui.getState().setSourceAssetId(clip.assetId);
-      ui.getState().setSourceTime(E.sourceTimeAt(clip, playhead, fps));
+      ui.getState().setSourceTime(E.sourceTimeAt(clip, usePlayback.getState().playhead, fps));
     }
     if (clip.generator === 'graphic') {
       ui.getState().setWorkspace('graphics');
@@ -996,7 +1006,6 @@ export function TimelinePanel() {
   const dur = sequenceDuration(seq);
   const visibleFrames = laneWidth / ppf;
   const totalFrames = Math.max(dur * 1.1, scrollFrame + visibleFrames, fps * 30);
-  const playheadX = frameToX(playhead);
   const selSet = new Set(selection.clipIds);
   const displayTool = drag?.kind === 'hand' ? 'hand' : tool;
   const cursor = displayTool === 'razor' ? 'crosshair' : displayTool === 'hand' ? (drag ? 'grabbing' : 'grab') : displayTool === 'zoom' ? 'zoom-in' : displayTool === 'pen' ? 'crosshair' : displayTool === 'ripple' || displayTool === 'rolling' ? 'col-resize' : displayTool === 'rateStretch' ? 'ew-resize' : undefined;
@@ -1005,7 +1014,7 @@ export function TimelinePanel() {
   return (
     <div className="timeline" ref={rootRef} tabIndex={0} onWheel={onWheel}>
       <div className="tl-head">
-        <TimecodeField frames={playhead} fps={fps} dropFrame={seq.settings.dropFrame} onChange={(f) => setPlayhead(f, { fromUser: true })} />
+        <PlayheadTimecode fps={fps} dropFrame={seq.settings.dropFrame} onChange={(f) => setPlayhead(f, { fromUser: true })} />
         <div className="vsep" />
         <div className="tl-seq-tabs" role="tablist">
           {openSeqIds.map((id) => {
@@ -1080,7 +1089,7 @@ export function TimelinePanel() {
           </div>
         </div>
         <div className="tl-tracks" onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
-          <Ruler seq={seq} ppf={ppf} scrollFrame={scrollFrame} width={laneWidth} onPointerDown={rulerDown} playheadX={playheadX} />
+          <Ruler seq={seq} ppf={ppf} scrollFrame={scrollFrame} width={laneWidth} onPointerDown={rulerDown} />
           <div ref={lanesRef} className="tl-lanes" style={{ cursor }} onPointerDown={onLanesPointerDown} onContextMenu={lanesContextMenu}>
             <div className="lanes-inner" style={{ top: -scrollY, height: layout.totalH }}>
               {layout.rows.map((r) => (
@@ -1141,7 +1150,7 @@ export function TimelinePanel() {
             {seq.inPoint != null && seq.outPoint != null ? <div style={{ position: 'absolute', top: 0, bottom: 0, left: frameToX(seq.inPoint), width: (seq.outPoint - seq.inPoint) * ppf, background: 'var(--c-in-out)', pointerEvents: 'none' }} /> : null}
             {view.snapLine != null ? <div className="tl-snapline" style={{ left: frameToX(view.snapLine) }} /> : null}
             {drag?.kind === 'marquee' ? <div className="tl-marquee" style={{ left: Math.min(drag.x0, drag.x1), top: Math.min(drag.y0, drag.y1), width: Math.abs(drag.x1 - drag.x0), height: Math.abs(drag.y1 - drag.y0) }} /> : null}
-            <div className="tl-playhead" style={{ left: playheadX }} />
+            <PlayheadMarker frameToX={frameToX} />
             {seq.clips.length === 0 ? (
               <div className="tl-empty">
                 <span>
@@ -1310,3 +1319,18 @@ function scaleToFrame(seq: Sequence, ids: Id[], mode: 'fit' | 'fill') {
 }
 
 export { getEffectDef, AUDIO_EFFECT_MAP };
+
+
+/* ---------- per-frame micro components ----------
+   These subscribe to the playhead themselves so frame moves during playback
+   re-render only this tiny subtree (a positioned div), never the timeline. */
+
+export function PlayheadMarker({ frameToX }: { frameToX: (f: number) => number }) {
+  const ph = usePlayback((s) => s.playhead);
+  return <div className="tl-playhead" style={{ left: frameToX(ph) }} />;
+}
+
+export function PlayheadTimecode({ fps, dropFrame, onChange }: { fps: number; dropFrame?: boolean; onChange: (f: number) => void }) {
+  const ph = usePlayback((s) => s.playhead);
+  return <TimecodeField frames={ph} fps={fps} dropFrame={dropFrame} onChange={onChange} />;
+}

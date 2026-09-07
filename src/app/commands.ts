@@ -984,7 +984,279 @@ export const cmd = {
       toast('warning', 'Auto Color', 'Could not read a frame from the selection.');
     }
   },
+
+  /* ---------- audio: remove silence ---------- */
+  /** Apply Remove Silence: razors out silent spans and ripples the gaps closed. */
+  removeSilence(opts: { sensitivity: number; minSilence: number; padding: number }, preview: import('../engine/audio/silence').SilenceResult | null, clipId: Id | null) {
+    const seq = seqNow();
+    if (!seq) return toast('warning', 'No sequence', 'Open a sequence with a clip that has audio and try again.');
+    const clip = clipId ? seq.clips.find((c) => c.id === clipId) : pickAudioClip(seq);
+    if (!clip || !clip.assetId) return toast('warning', 'Remove Silence', 'No clip with decoded audio found.');
+    const silences = preview?.silences ?? [];
+    if (!silences.length) return toast('info', 'Remove Silence', 'No silences detected with the current settings.');
+    const fps = seq.settings.fps;
+    const speed = Math.max(0.01, clip.speed);
+    // Linked clips (video + audio from one source) are cut together.
+    const group = clip.linkId ? seq.clips.filter((c) => c.linkId === clip.linkId) : [clip];
+    useProject.getState().update('Remove silence', (p) => {
+      const s = p.sequences.find((x) => x.id === seq.id);
+      if (!s) return;
+      for (const g of group) {
+        const live = s.clips.find((c) => c.id === g.id);
+        if (!live) continue;
+        const startF = live.start;
+        const endF = E.clipEnd(live);
+        // Source seconds -> timeline frames for THIS clip.
+        const toFrame = (t: number) => Math.round(live.start + ((t - live.inPoint) / speed) * fps);
+        const cuts = new Set<number>();
+        for (const [a, b] of silences) {
+          const fa = toFrame(a);
+          const fb = toFrame(b);
+          if (fb <= startF + 1 || fa >= endF - 1) continue;
+          cuts.add(Math.max(startF + 1, fa));
+          cuts.add(Math.min(endF - 1, fb));
+        }
+        if (!cuts.size) continue;
+        for (const f of [...cuts].sort((x, y) => x - y)) E.razorAt(s, f);
+        // Pieces of the original clip, left to right.
+        const pieces = s.clips.filter((c) => (c.trackId === live.trackId && c.start >= startF && c.start < endF) || c.id === live.id).sort((a, b) => a.start - b.start);
+        const silentMid = (c: Clip) => {
+          const midSrc = live.inPoint + ((c.start + c.duration / 2 - live.start) / fps) * speed;
+          return silences.some(([a, b]) => midSrc >= a && midSrc <= b);
+        };
+        const doomed = pieces.filter(silentMid).map((c) => c.id);
+        if (doomed.length) E.deleteClips(s, doomed, true);
+      }
+    });
+    const removed = Math.round(silences.reduce((a, [a0, b0]) => a + (b0 - a0), 0) * fps);
+    toast('success', 'Silence removed', `${silences.length} region${silences.length === 1 ? '' : 's'}, ${removed} frames taken out. Undo with Ctrl+Z.`);
+  },
+
+  /* ---------- audio: normalize loudness ---------- */
+  /** Normalize clip loudness to a target LUFS via clip gain. */
+  async normalizeAudio(targetLufs = -14) {
+    const seq = seqNow();
+    if (!seq) return toast('warning', 'No sequence', 'Open a sequence and try again.');
+    let clips = selectedClips().filter((c) => getMedia(c.assetId)?.audio);
+    if (!clips.length) clips = seq.clips.filter((c) => getMedia(c.assetId)?.audio);
+    if (!clips.length) return toast('info', 'Normalize Audio', 'No clips with decoded audio found.');
+    const { integratedLufs } = await import('../engine/audio/loudness');
+    const fps = seq.settings.fps;
+    const changes: Array<{ id: Id; from: number; to: number }> = [];
+    useProject.getState().beginBatch('Normalize audio');
+    for (const clip of clips) {
+      const buffer = getMedia(clip.assetId)!.audio!;
+      const spanEnd = Math.min(buffer.duration, clip.inPoint + (clip.duration / fps) * Math.max(0.01, clip.speed));
+      const measured = integratedLufs(buffer, clip.inPoint, spanEnd);
+      if (measured.lufs == null) continue;
+      const gain = Math.max(-30, Math.min(30, targetLufs - measured.lufs));
+      changes.push({ id: clip.id, from: measured.lufs, to: measured.lufs + gain });
+      useProject.getState().updateTransient((p) => {
+        const s = p.sequences.find((x) => x.id === seq.id);
+        const c = s?.clips.find((x) => x.id === clip.id);
+        if (c) c.audio.gain = Math.round((c.audio.gain + gain) * 10) / 10;
+      });
+    }
+    if (changes.length) {
+      useProject.getState().endBatch();
+      const first = changes[0];
+      toast('success', `Normalized ${changes.length} clip${changes.length === 1 ? '' : 's'}`, `First clip: ${first.from.toFixed(1)} -> ${first.to.toFixed(1)} LUFS (target ${targetLufs}).`);
+    } else {
+      useProject.getState().cancelBatch();
+      toast('warning', 'Normalize Audio', 'Could not measure the selection (is it silent?).');
+    }
+  },
+
+  /* ---------- ken burns ---------- */
+  /** Write pan/zoom (Ken Burns) motion keyframes on the selection. */
+  kenBurns(preset: 'zoomIn' | 'zoomOut' | 'panLeft' | 'panRight' | 'auto', strength = 5) {
+    const seq = seqNow();
+    if (!seq) return toast('warning', 'No sequence', 'Open a sequence and try again.');
+    let clips = selectedClips().filter((c) => seq.tracks.find((t) => t.id === c.trackId)?.kind === 'video');
+    if (!clips.length) clips = seq.clips.filter((c) => seq.tracks.find((t) => t.id === c.trackId)?.kind === 'video');
+    if (!clips.length) return toast('info', 'Pan & Zoom', 'No video clips found.');
+    const st = Math.max(1, Math.min(10, strength));
+    const zoom = 1 + st * 0.018; // 1.018 .. 1.18
+    const drift = st * 0.008; // normalized sequence units
+    const pickFor = (c: Clip): 'zoomIn' | 'zoomOut' | 'panLeft' | 'panRight' => {
+      if (preset !== 'auto') return preset;
+      let h = 0;
+      for (let i = 0; i < c.id.length; i++) h = (h * 31 + c.id.charCodeAt(i)) | 0;
+      return (['zoomIn', 'zoomOut', 'panLeft', 'panRight'] as const)[Math.abs(h) % 4];
+    };
+    useProject.getState().update('Pan & zoom', (p) => {
+      const s = p.sequences.find((x) => x.id === seq.id);
+      if (!s) return;
+      for (const clip of clips) {
+        const c = s.clips.find((x) => x.id === clip.id);
+        if (!c) continue;
+        const dur = Math.max(1, c.duration - 1);
+        const kind = pickFor(c);
+        const pos = c.motion.position.value;
+        if (kind === 'zoomIn' || kind === 'zoomOut') {
+          const from = kind === 'zoomIn' ? 100 : 100 * zoom;
+          const to = kind === 'zoomIn' ? 100 * zoom : 100;
+          c.motion.scale = { value: from, animated: true, keyframes: [{ t: 0, v: from, interp: 'linear' }, { t: dur, v: Math.round(to * 10) / 10, interp: 'easeInOut' }] };
+          c.motion.position = { value: pos, animated: true, keyframes: [{ t: 0, v: pos, interp: 'linear' }, { t: dur, v: pos, interp: 'linear' }] };
+        } else {
+          const dx = kind === 'panLeft' ? -drift : drift;
+          c.motion.position = {
+            value: pos,
+            animated: true,
+            keyframes: [
+              { t: 0, v: [Math.round((pos[0] - dx) * 1000) / 1000, pos[1]] as [number, number], interp: 'linear' },
+              { t: dur, v: [Math.round((pos[0] + dx) * 1000) / 1000, pos[1]] as [number, number], interp: 'easeInOut' },
+            ],
+          };
+        }
+      }
+    });
+    toast('success', `Pan & Zoom applied to ${clips.length} clip${clips.length === 1 ? '' : 's'}`, 'Keyframes land on the clip - tweak them in Effect Controls.');
+  },
+
+  /* ---------- cut to beats ---------- */
+  /** Razor clips at every beat marker (detecting beats first when there are none). */
+  async cutToBeats() {
+    const seq = seqNow();
+    if (!seq) return toast('warning', 'No sequence', 'Open a sequence and try again.');
+    let frames: number[] = seq.markers.filter((m) => m.kind === 'beat').map((m) => m.time);
+    if (!frames.length) {
+      // Auto-detect from the first clip with audio, like Detect Beats does.
+      const clip = seq.clips.find((c) => getMedia(c.assetId)?.audio);
+      if (!clip) return toast('info', 'Cut to Beats', 'No beat markers. Run Sequence > Detect Beats first (or add a music clip with audio).');
+      const buffer = getMedia(clip.assetId)!.audio!;
+      const { detectBeats } = await import('../engine/audio/beats');
+      const r = detectBeats(buffer, { sensitivity: 0.5 });
+      const fps = seq.settings.fps;
+      frames = r.beats.map((t) => Math.round(clip.start + ((t - clip.inPoint) / Math.max(0.01, clip.speed)) * fps)).filter((f) => f > clip.start && f < E.clipEnd(clip));
+    }
+    frames = [...new Set(frames)].sort((a, b) => a - b);
+    if (!frames.length) return toast('info', 'Cut to Beats', 'No beats detected.');
+    let cuts = 0;
+    useProject.getState().update('Cut to beats', (p) => {
+      const s = p.sequences.find((x) => x.id === seq.id);
+      if (!s) return;
+      for (const f of frames) if (E.razorAt(s, f).length) cuts++;
+    });
+    toast('success', 'Cut to Beats', `${cuts} cuts added at beat${cuts === 1 ? '' : 's'}. Snapping locks to the markers.`);
+  },
+
+  /* ---------- auto reframe ---------- */
+  /** Create a reframed copy of the sequence at a new aspect ratio, tracking the action. */
+  async autoReframe(target: '9:16' | '1:1' | '4:5' | '16:9', onProgress?: (label: string, done: number, total: number) => void) {
+    const seq = seqNow();
+    if (!seq) return toast('warning', 'No sequence', 'Open a sequence and try again.');
+    const srcW = seq.settings.width;
+    const srcH = seq.settings.height;
+    const ar: Record<typeof target, number> = { '9:16': 9 / 16, '1:1': 1, '4:5': 4 / 5, '16:9': 16 / 9 };
+    const want = ar[target];
+    // Keep the source's long side (capped at standard sizes) so nothing upscales.
+    const longSide = Math.min(1920, Math.max(480, Math.max(srcW, srcH)));
+    let outW: number;
+    let outH: number;
+    if (want >= 1) {
+      outW = longSide;
+      outH = Math.round(longSide / want);
+    } else {
+      outH = longSide;
+      outW = Math.round(longSide * want);
+    }
+    outW -= outW % 2;
+    outH -= outH % 2;
+
+    // Analyse each video clip's motion first (outside the undo batch).
+    const project = useProject.getState().project;
+    const videoClips = seq.clips.filter((c) => seq.tracks.find((t) => t.id === c.trackId)?.kind === 'video');
+    const { analyzeMotion } = await import('../engine/color/reframe');
+    const tracks = new Map<Id, import('../engine/color/reframe').ReframeSample[]>();
+    let done = 0;
+    for (const c of videoClips) {
+      const asset = project.assets.find((a) => a.id === c.assetId);
+      if (!asset || (asset.kind !== 'video' && asset.kind !== 'image')) {
+        tracks.set(c.id, []);
+        continue;
+      }
+      onProgress?.(c.name, done, videoClips.length);
+      try {
+        tracks.set(c.id, await analyzeMotion(project, seq, c, (d, t) => onProgress?.(c.name, done + d / t, videoClips.length)));
+      } catch {
+        tracks.set(c.id, []);
+      }
+      done++;
+    }
+    onProgress?.('Building sequence', videoClips.length, videoClips.length);
+
+    useProject.getState().update('Auto reframe', (p) => {
+      const src = p.sequences.find((x) => x.id === seq.id);
+      if (!src) return;
+      const idMap = new Map<Id, Id>();
+      const cloned: Sequence = JSON.parse(JSON.stringify(src));
+      cloned.id = uid('seq');
+      cloned.name = `${src.name} (${target})`;
+      cloned.settings = { ...cloned.settings, width: outW, height: outH };
+      cloned.tracks = cloned.tracks.map((t) => {
+        const nid = uid('trk');
+        idMap.set(t.id, nid);
+        return { ...t, id: nid };
+      });
+      const clipIdMap = new Map<Id, Id>();
+      cloned.clips = cloned.clips.map((c) => {
+        const nid = uid('clip');
+        clipIdMap.set(c.id, nid);
+        return { ...c, id: nid, trackId: idMap.get(c.trackId)!, linkId: c.linkId ? `lnk-${c.linkId}-${cloned.id}` : null, groupId: null };
+      });
+      // rewrite link ids uniquely for the new sequence
+      const linkRemap = new Map<string, string>();
+      for (const c of cloned.clips) {
+        if (!c.linkId) continue;
+        if (!linkRemap.has(c.linkId)) linkRemap.set(c.linkId, uid('lnk'));
+        c.linkId = linkRemap.get(c.linkId)!;
+      }
+      cloned.markers = cloned.markers.map((m) => ({ ...m, id: uid('mrk') }));
+      cloned.captions = cloned.captions.map((c) => ({ ...c, id: uid('cap') }));
+      cloned.view = { ...cloned.view, playhead: 0 };
+      for (const c of cloned.clips) {
+        const srcClipId = [...clipIdMap.entries()].find(([, v]) => v === c.id)?.[0];
+        const samples = srcClipId ? tracks.get(srcClipId) : undefined;
+        const asset = p.assets.find((a) => a.id === c.assetId);
+        // NB: c.trackId is remapped - check against the CLONED tracks.
+        const isVisual = cloned.tracks.find((t) => t.id === c.trackId)?.kind === 'video';
+        if (!isVisual || !asset || asset.kind === 'audio' || !asset.width || !asset.height) continue;
+        const coverPct = Math.max(outW / asset.width, outH / asset.height) * 100;
+        c.motion.scale = { ...c.motion.scale, value: Math.round(coverPct * 10) / 10, keyframes: undefined, animated: false };
+        // Horizontal pan range available at this scale.
+        const visHalfX = ((outW / asset.width) / (coverPct / 100)) * 0.5;
+        const clampX = (x: number) => Math.max(0.5 - (0.5 - visHalfX), Math.min(0.5 + (0.5 - visHalfX), x));
+        const base: [number, number] = [c.motion.position.value[0], c.motion.position.value[1]];
+        void base;
+        if (samples && samples.length >= 2) {
+          const fps = cloned.settings.fps;
+          const kfs = samples.map((sm) => ({
+            t: Math.max(0, Math.min(c.duration - 1, Math.round(sm.t * fps))),
+            v: [clampX(0.5 - (sm.x - 0.5) * ((asset.width ?? outW) / outW) * (coverPct / 100)), clampX(0.5 - (sm.y - 0.5) * ((asset.height ?? outH) / outH) * (coverPct / 100) * 0.6)] as [number, number],
+            interp: 'linear' as const,
+          }));
+          c.motion.position = { value: kfs[0].v, animated: true, keyframes: kfs };
+        } else {
+          c.motion.position = { ...c.motion.position, value: [0.5, 0.5], keyframes: undefined, animated: false };
+        }
+      }
+      p.sequences.push(cloned);
+      p.openSequenceIds.push(cloned.id);
+      p.activeSequenceId = cloned.id;
+      p.assets.push({ id: uid('ast'), kind: 'sequence', name: cloned.name, binId: useUI.getState().currentBinId, label: 'iris', sequenceId: cloned.id, hasVideo: true, hasAudio: true, width: outW, height: outH, fps: cloned.settings.fps, duration: 0, offline: false, createdAt: Date.now(), meta: {} });
+    });
+    usePlayback.setState({ playhead: 0 });
+    toast('success', 'Auto Reframe', `"${seq.name}" copied at ${outW}x${outH} (${target}). Clips track the action; nudge position keyframes to taste.`);
+  },
 };
+
+/** The clip Remove Silence / Normalize Audio operate on: first selected clip with audio, else the first one. */
+export function pickAudioClip(seq: Sequence): Clip | null {
+  const sel = selectedClips();
+  const withAudio = (c: Clip) => !!getMedia(c.assetId)?.audio;
+  return sel.find(withAudio) ?? seq.clips.find(withAudio) ?? null;
+}
 
 let clipboard: E.ClipboardPayload | null = null;
 let attrClipboard: { motion: Clip['motion']; audio: Clip['audio']; effects: Clip['effects'] } | null = null;

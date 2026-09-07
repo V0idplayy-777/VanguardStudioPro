@@ -19,7 +19,8 @@ const CHANNEL_INDEX: Record<string, number> = { rgb: 0, alpha: 1, r: 2, g: 3, b:
 export function ProgramMonitor() {
   const seq = useActiveSequence();
   const project = useProject((s) => s.project);
-  const playhead = usePlayback((s) => s.playhead);
+  // NOTE: no `playhead` subscription here on purpose — per-frame moves must not
+  // re-render the whole monitor. Scrubber/TimecodeField/handles subscribe themselves.
   const playing = usePlayback((s) => s.playing);
   const rate = usePlayback((s) => s.rate);
   const loop = usePlayback((s) => s.loop);
@@ -77,16 +78,19 @@ export function ProgramMonitor() {
     scheduleRender(true);
   }, [seq?.id]);
 
-  // Overlays: safe margins, grid, rulers, selection transform handles
+  // Overlays: safe margins, grid, rulers, selection transform handles.
+  // Static overlays redraw only when their inputs change; transform handles
+  // (paused + active selection only) are drawn by a micro component that
+  // subscribes to the playhead itself, so playback never re-renders the
+  // monitor or repaints this canvas per frame.
   const selClip = useMemo(() => {
     if (!seq || selection.length !== 1) return null;
     const c = seq.clips.find((x) => x.id === selection[0]);
     if (!c) return null;
     const t = seq.tracks.find((x) => x.id === c.trackId);
     if (t?.kind !== 'video') return null;
-    if (playhead < c.start || playhead >= c.start + c.duration) return null;
     return c;
-  }, [seq, selection, playhead]);
+  }, [seq, selection]);
 
   useEffect(() => {
     const cv = overlayRef.current;
@@ -94,59 +98,9 @@ export function ProgramMonitor() {
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     cv.width = Math.round(geom.w * dpr);
     cv.height = Math.round(geom.h * dpr);
-    const ctx = cv.getContext('2d')!;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, geom.w, geom.h);
-    const W = geom.w,
-      H = geom.h;
-    if (ui.programOverlay.includes('safeMargins')) {
-      ctx.strokeStyle = 'rgba(224,224,224,0.55)';
-      ctx.lineWidth = 1;
-      ctx.strokeRect(W * 0.05 + 0.5, H * 0.05 + 0.5, W * 0.9, H * 0.9);
-      ctx.strokeRect(W * 0.1 + 0.5, H * 0.1 + 0.5, W * 0.8, H * 0.8);
-      ctx.beginPath();
-      ctx.moveTo(W / 2, H / 2 - 10);
-      ctx.lineTo(W / 2, H / 2 + 10);
-      ctx.moveTo(W / 2 - 10, H / 2);
-      ctx.lineTo(W / 2 + 10, H / 2);
-      ctx.stroke();
-    }
-    if (ui.programOverlay.includes('grid')) {
-      ctx.strokeStyle = 'rgba(224,224,224,0.25)';
-      ctx.beginPath();
-      for (let i = 1; i < 3; i++) {
-        ctx.moveTo((W * i) / 3 + 0.5, 0);
-        ctx.lineTo((W * i) / 3 + 0.5, H);
-        ctx.moveTo(0, (H * i) / 3 + 0.5);
-        ctx.lineTo(W, (H * i) / 3 + 0.5);
-      }
-      ctx.stroke();
-    }
-    if (ui.programOverlay.includes('rulers')) {
-      ctx.fillStyle = 'rgba(0,0,0,0.5)';
-      ctx.fillRect(0, 0, W, 12);
-      ctx.fillRect(0, 0, 12, H);
-      ctx.fillStyle = '#c5c5c5';
-      ctx.font = '380 9px "Inter Variable", Inter, sans-serif';
-      const step = seq.settings.width >= 3000 ? 500 : 200;
-      for (let px = 0; px <= seq.settings.width; px += step) {
-        const x = (px / seq.settings.width) * W;
-        ctx.fillRect(x, 8, 1, 4);
-        ctx.fillText(String(px), x + 2, 8);
-      }
-      for (let py = 0; py <= seq.settings.height; py += step) {
-        const y = (py / seq.settings.height) * H;
-        ctx.fillRect(8, y, 4, 1);
-        ctx.save();
-        ctx.translate(8, y + 2);
-        ctx.rotate(-Math.PI / 2);
-        ctx.textAlign = 'right';
-        ctx.fillText(String(py), 0, 0);
-        ctx.restore();
-      }
-    }
-    if (selClip && !playing) drawTransformHandles(ctx, selClip, seq, project, W, H, playhead);
-  }, [frameVersion, geom, ui.programOverlay, selClip, seq, project, playhead, playing]);
+    drawStaticOverlays(cv, geom.w, geom.h, seq, ui.programOverlay);
+    // selClip/playing in deps so cleared selections / starting playback wipe stale handles
+  }, [geom, ui.programOverlay, seq, selClip, playing]);
 
   /* ---------- direct manipulation (move / scale / rotate selected clip) ---------- */
   const dragRef = useRef<{ mode: 'move' | 'scale' | 'rotate'; startX: number; startY: number; pos: [number, number]; scale: number; rot: number; began: boolean; corner?: number } | null>(null);
@@ -155,6 +109,8 @@ export function ProgramMonitor() {
     const rect = canvasRef.current!.getBoundingClientRect();
     const nx = (e.clientX - rect.left) / rect.width;
     const ny = (e.clientY - rect.top) / rect.height;
+    const playhead = usePlayback.getState().playhead;
+    if (playhead < selClip.start || playhead >= selClip.start + selClip.duration) return;
     const box = clipBox(selClip, seq, project, playhead);
     const local = clamp01(nx, ny);
     void local;
@@ -174,7 +130,7 @@ export function ProgramMonitor() {
       useProject.getState().updateTransient((p) => {
         const s = p.sequences.find((x) => x.id === seq.id)!;
         const c = s.clips.find((x) => x.id === selClip.id)!;
-        const local = playhead - c.start;
+        const local = usePlayback.getState().playhead - c.start;
         if (d.mode === 'move') {
           const v: [number, number] = ev.shiftKey ? (Math.abs(dx) > Math.abs(dy) ? [d.pos[0] + dx, d.pos[1]] : [d.pos[0], d.pos[1] + dy]) : [d.pos[0] + dx, d.pos[1] + dy];
           c.motion.position = writeKf(c.motion.position, local, v);
@@ -287,6 +243,7 @@ export function ProgramMonitor() {
           <>
             <canvas ref={canvasRef} style={{ left: geom.x, top: geom.y, width: geom.w, height: geom.h }} />
             <canvas ref={overlayRef} className="overlay-svg" style={{ left: geom.x, top: geom.y, width: geom.w, height: geom.h }} />
+            <TransformHandlesOverlay canvasRef={overlayRef} geom={geom} seq={seq} project={project} selClip={selClip} playing={playing} overlays={ui.programOverlay} />
             {showPerf ? (
               <div className="perf-hud" title="Live render statistics (Settings, Performance)">
                 <span>{playing ? `${fpsActual.toFixed(0)} fps` : 'idle'}</span>
@@ -316,9 +273,9 @@ export function ProgramMonitor() {
           </div>
         ) : null}
       </div>
-      <Scrubber seq={seq} playhead={playhead} dur={dur} onSeek={(f) => pb.getState().setPlayhead(f, { fromUser: true })} />
+      <Scrubber seq={seq} dur={dur} onSeek={(f) => pb.getState().setPlayhead(f, { fromUser: true })} />
       <div className="transport">
-        <TimecodeField frames={playhead} fps={fps} dropFrame={seq?.settings.dropFrame} onChange={(f) => pb.getState().setPlayhead(f, { fromUser: true })} />
+        <PlayheadTimecode fps={fps} dropFrame={seq?.settings.dropFrame} onChange={(f) => pb.getState().setPlayhead(f, { fromUser: true })} />
         <span className="rate-badge">{playing && rate !== 1 ? `${rate > 0 ? '' : '-'}${Math.abs(rate)}x` : ''}</span>
         <div className="center">
           <IconButton icon="markIn" label="Mark In (I)" onClick={() => cmd.markIn()} />
@@ -347,8 +304,94 @@ export function ProgramMonitor() {
   );
 }
 
-export function Scrubber({ seq, playhead, dur, onSeek, markers = true }: { seq: Sequence | null; playhead: number; dur: number; onSeek: (f: number) => void; markers?: boolean }) {
+/** Static monitor overlays (safe margins / grid / pixel rulers). */
+function drawStaticOverlays(cv: HTMLCanvasElement, W: number, H: number, seq: Sequence, overlays: readonly string[]) {
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const ctx = cv.getContext('2d')!;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  if (overlays.includes('safeMargins')) {
+    ctx.strokeStyle = 'rgba(224,224,224,0.55)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(W * 0.05 + 0.5, H * 0.05 + 0.5, W * 0.9, H * 0.9);
+    ctx.strokeRect(W * 0.1 + 0.5, H * 0.1 + 0.5, W * 0.8, H * 0.8);
+    ctx.beginPath();
+    ctx.moveTo(W / 2, H / 2 - 10);
+    ctx.lineTo(W / 2, H / 2 + 10);
+    ctx.moveTo(W / 2 - 10, H / 2);
+    ctx.lineTo(W / 2 + 10, H / 2);
+    ctx.stroke();
+  }
+  if (overlays.includes('grid')) {
+    ctx.strokeStyle = 'rgba(224,224,224,0.25)';
+    ctx.beginPath();
+    for (let i = 1; i < 3; i++) {
+      ctx.moveTo((W * i) / 3 + 0.5, 0);
+      ctx.lineTo((W * i) / 3 + 0.5, H);
+      ctx.moveTo(0, (H * i) / 3 + 0.5);
+      ctx.lineTo(W, (H * i) / 3 + 0.5);
+    }
+    ctx.stroke();
+  }
+  if (overlays.includes('rulers')) {
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(0, 0, W, 12);
+    ctx.fillRect(0, 0, 12, H);
+    ctx.fillStyle = '#c5c5c5';
+    ctx.font = '380 9px "Inter Variable", Inter, sans-serif';
+    const step = seq.settings.width >= 3000 ? 500 : 200;
+    for (let px = 0; px <= seq.settings.width; px += step) {
+      const x = (px / seq.settings.width) * W;
+      ctx.fillRect(x, 8, 1, 4);
+      ctx.fillText(String(px), x + 2, 8);
+    }
+    for (let py = 0; py <= seq.settings.height; py += step) {
+      const y = (py / seq.settings.height) * H;
+      ctx.fillRect(8, y, 4, 1);
+      ctx.save();
+      ctx.translate(8, y + 2);
+      ctx.rotate(-Math.PI / 2);
+      ctx.textAlign = 'right';
+      ctx.fillText(String(py), 0, 0);
+      ctx.restore();
+    }
+  }
+}
+
+/** Timecode readout bound to the live playhead — re-renders only itself. */
+function PlayheadTimecode({ fps, dropFrame, onChange }: { fps: number; dropFrame?: boolean; onChange: (f: number) => void }) {
+  const ph = usePlayback((s) => s.playhead);
+  return <TimecodeField frames={ph} fps={fps} dropFrame={dropFrame} onChange={onChange} />;
+}
+
+/** Selection transform handles on the shared overlay canvas. Renders nothing;
+ *  subscribes to the playhead so frame-stepping while paused updates handles
+ *  without ever re-rendering the monitor. No-op during playback. */
+function TransformHandlesOverlay({ canvasRef, geom, seq, project, selClip, playing, overlays }: { canvasRef: React.RefObject<HTMLCanvasElement | null>; geom: { w: number; h: number }; seq: Sequence | null; project: ReturnType<typeof useProject.getState>['project']; selClip: Clip | null; playing: boolean; overlays: string[] }) {
+  const playhead = usePlayback((s) => s.playhead);
+  const active = !!selClip && !playing && playhead >= selClip.start && playhead < selClip.start + selClip.duration;
+  useEffect(() => {
+    if (!active || !seq || !selClip) return;
+    const cv = canvasRef.current;
+    if (!cv || !geom.w) return;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    cv.width = Math.round(geom.w * dpr);
+    cv.height = Math.round(geom.h * dpr);
+    drawStaticOverlays(cv, geom.w, geom.h, seq, overlays);
+    const ctx = cv.getContext('2d')!;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    drawTransformHandles(ctx, selClip, seq, project, geom.w, geom.h, playhead);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, playhead, geom.w, geom.h, selClip, seq, project, overlays.join(',')]);
+  return null;
+}
+
+export function Scrubber({ seq, playhead, dur, onSeek, markers = true }: { seq: Sequence | null; playhead?: number; dur: number; onSeek: (f: number) => void; markers?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
+  // When no explicit playhead is passed (program monitor) subscribe directly,
+  // so per-frame playhead moves never re-render the parent monitor.
+  const live = usePlayback((s) => s.playhead);
+  const ph = playhead ?? live;
   const total = Math.max(dur, 1);
   const pos = (f: number) => `${clamp((f / total) * 100, 0, 100)}%`;
   const seek = (clientX: number) => {
@@ -374,7 +417,7 @@ export function Scrubber({ seq, playhead, dur, onSeek, markers = true }: { seq: 
     >
       {seq?.inPoint != null || seq?.outPoint != null ? <div className="range" style={{ left: pos(seq.inPoint ?? 0), width: `calc(${pos(seq.outPoint ?? dur)} - ${pos(seq.inPoint ?? 0)})` }} /> : null}
       {markers && seq ? seq.markers.map((m) => <div key={m.id} className="mk" style={{ left: pos(m.time) }} />) : null}
-      <div className="head" style={{ left: pos(playhead) }} />
+      <div className="head" style={{ left: pos(ph) }} />
     </div>
   );
 }

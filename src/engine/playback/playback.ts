@@ -48,6 +48,8 @@ let compositor: Compositor | null = null;
 let audio: TimelineAudio | null = null;
 let rafId = 0;
 let lastTick = 0;
+let lastAudioClock = -1;
+let lastAudioFrame = 0;
 let rendering = false;
 let pendingRender = false;
 let lastRenderedFrame = -1;
@@ -68,8 +70,11 @@ onMediaChange(() => {
 export function getCompositor(): Compositor {
   if (!compositor) {
     const c = document.createElement('canvas');
-    c.width = 1920;
-    c.height = 1080;
+    // Starts tiny; present() grows it to the largest frame it shows. A fixed
+    // 1920x1080 present surface rasterizes ~9x more pixels than a 640x360
+    // sequence needs on every single frame.
+    c.width = 2;
+    c.height = 2;
     compositor = new Compositor(c);
     compositor.onShaderError = (m) => logEvent('error', 'Shader failed to compile', m);
   }
@@ -126,6 +131,8 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
     set({ playing: true, rate, playhead: start });
     getTimelineAudio().play(start / fps, rate);
     lastTick = performance.now();
+    lastAudioClock = -1;
+    lastAudioFrame = start;
     cancelAnimationFrame(rafId);
     rafId = requestAnimationFrame(tick);
   },
@@ -187,8 +194,20 @@ function tick(now: number) {
   lastTick = now;
   let frame: number;
   if (st.rate > 0 && st.rate <= 4) {
-    // slave to audio clock for sync
-    frame = Math.round(getTimelineAudio().currentTime() * fps);
+    // Slave to the audio clock for sync, but glide over clock quantisation:
+    // AudioContext.currentTime only advances when the audio device callbacks
+    // run, so with a large output buffer (Bluetooth heads can be 100ms+) or
+    // no device at all the clock jumps in steps — interpolating with the wall
+    // clock between steps keeps the video cadence smooth, re-syncing at every
+    // real clock update.
+    const at = getTimelineAudio().currentTime();
+    if (at === lastAudioClock) {
+      frame = Math.round(lastAudioFrame + dt * fps * st.rate);
+    } else {
+      frame = Math.round(at * fps);
+      lastAudioFrame = frame;
+      lastAudioClock = at;
+    }
   } else {
     frame = Math.round(st.playhead + dt * fps * st.rate);
   }
@@ -228,6 +247,8 @@ function tick(now: number) {
 
 let renderQueued = false;
 let forceNext = false;
+/** Adaptive half-res flag with hysteresis (see renderNow). */
+let adaptiveHalf = false;
 
 export function scheduleRender(force = false) {
   if (force) forceNext = true;
@@ -259,7 +280,21 @@ async function renderNow() {
   const seq = getActiveSequence(project);
   if (!seq) return;
   const quality = useUI.getState().programQuality;
-  const key = `${quality}`;
+  let scale = quality === 'half' ? 2 : quality === 'quarter' ? 4 : 1;
+  // Adaptive preview resolution with hysteresis: drop to half when renders
+  // miss the frame budget, climb back when there is plenty of headroom.
+  // (Previously it dropped and never recovered — a permanently blurry preview.)
+  const budgetMs = 1000 / seq.settings.fps;
+  if (st.playing && settings().autoQualityDrop && scale === 1) {
+    if (adaptiveHalf) {
+      if (st.renderMs < budgetMs * 0.35) adaptiveHalf = false;
+      else scale = 2;
+    } else if (st.renderMs > budgetMs * 0.9) {
+      adaptiveHalf = true;
+      scale = 2;
+    }
+  }
+  const key = `${quality}:${scale}`;
   const force = forceNext;
   forceNext = false;
   if (!force && lastRenderedFrame === st.playhead && lastRenderedRev === project.revision && lastRenderedQuality === key && lastMediaVersion === mediaVersion && !hasAnimatedEffects(seq, st.playhead)) {
@@ -269,9 +304,6 @@ async function renderNow() {
   const t0 = performance.now();
   try {
     const comp = getCompositor();
-    let scale = quality === 'half' ? 2 : quality === 'quarter' ? 4 : 1;
-    // During fast playback drop to half to keep up
-    if (st.playing && scale === 1 && settings().autoQualityDrop && st.renderMs > (1000 / seq.settings.fps) * 0.9) scale = 2;
     const rt = await comp.renderFrame(project, seq, st.playhead, { scale, captions: true });
     // Snapshot the finished frame into a private target immediately (this is
     // synchronous, so nothing can reuse the render target in between). The
@@ -350,16 +382,13 @@ export function presentTo(canvas: HTMLCanvasElement, opts: { channel?: number; c
     return;
   }
   presentedCanvases.add(canvas);
-  const src = comp.canvas as HTMLCanvasElement;
-  if (src.width !== lastRT.width || src.height !== lastRT.height) {
-    src.width = lastRT.width;
-    src.height = lastRT.height;
-  }
   comp.present(lastRT, { channel: opts.channel, checker: opts.checker, bg: opts.bg });
+  const src = comp.canvas as HTMLCanvasElement;
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(src, 0, 0, canvas.width, canvas.height);
+  // present() letterboxes the frame top-left in the shared (grow-only) canvas,
+  // so copy exactly that region. It was fully overwritten this call — no clear needed.
+  ctx.drawImage(src, 0, 0, lastRT.width, lastRT.height, 0, 0, canvas.width, canvas.height);
 }
 
 /** Render an arbitrary frame of a sequence to a canvas (thumbnails, export, source monitor). */
