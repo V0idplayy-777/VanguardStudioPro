@@ -187,11 +187,17 @@ function createSampleAssets(): MediaAsset[] {
       fill: '#c5c5c5',
       pin: 'center',
     });
-    doc.layers[0].fontSize = Math.round(h * 0.09);
-    doc.layers[0].fontWeight = 620;
-    doc.layers[0].align = 'center';
-    doc.layers[0].anchor = 'center';
-    doc.layers[0].pin = 'center';
+    // doc.layers is a GraphicLayer union; narrow to the text layer that
+    // blankTextDocument guarantees as the first entry before touching
+    // TextLayer-only properties.
+    const title = doc.layers[0];
+    if (title.kind === 'text') {
+      title.fontSize = Math.round(h * 0.09);
+      title.fontWeight = 620;
+      title.align = 'center';
+      title.anchor = 'center';
+      title.pin = 'center';
+    }
     doc.layers.push(subtitle);
     a.graphic = doc;
     a.width = w;
