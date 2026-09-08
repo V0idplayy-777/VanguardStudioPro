@@ -437,6 +437,10 @@ const LESSONS: { title: string; body: React.ReactNode }[] = [
   { title: 'Titles', body: <>Essential Graphics has templates you can drag onto a video track; the Edit tab changes text, fonts, alignment, animation in/out and responsive pinning.</> },
   { title: 'Export', body: <><Kbd>Ctrl+M</Kbd> opens Export. Choose MP4/WebM, resolution, bitrate, and In/Out range. Hardware encoders are used through WebCodecs when available; otherwise a real-time capture path is used.</> },
   { title: 'Workspaces', body: <>Switch layouts from the Workspaces bar or <Kbd>Alt+Shift+1..9</Kbd>. Drag a panel tab to another group, or grab the group handle to float it. Press <Kbd>`</Kbd> to maximise the panel under the mouse.</> },
+  { title: 'Fix shaky footage', body: <>Clip menu, <em>Stabilize</em>: the clip is re-rendered at low resolution, frame-to-frame motion is measured, and counteracting position keyframes plus a small crop zoom are written. Choose <em>Smooth motion</em> for a gliding camera or <em>No motion</em> for a locked-off tripod look.</> },
+  { title: 'Sync double-system audio', body: <>Recorded sound on a separate recorder? Drop both clips on the timeline, then Clip menu, <em>Sync Clips by Audio</em>. Loudness envelopes are cross-correlated, each clip gets an offset and a match percentage, and the checked ones move into place - linked video travels with its audio.</> },
+  { title: 'Split screen and montages', body: <>Select 2-4 clips and run Sequence, <em>Split Screen / Picture-in-Picture</em> for side-by-side, stacked, grid or corner-PIP layouts. Sequence, <em>Auto Montage</em> builds a whole new sequence: pick a music track and your photos/clips, and they are cut to the detected beat grid with gentle Ken Burns moves.</> },
+  { title: 'Batch exports', body: <>The Export panel has a Render Queue: dial in settings, press <em>Add to Queue</em>, change the preset or the sequence and add again. <em>Start Queue</em> renders every item back to back from the latest project state, downloading each file as it lands.</> },
 ];
 
 export function LearnPanel() {

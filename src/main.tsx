@@ -195,14 +195,31 @@ function App() {
   const interval = useProject((s) => s.project.settings.autoSaveIntervalMinutes);
 
   // Application settings: apply theme/a11y on boot and follow changes. The
-  // default program quality also seeds the UI store.
+  // default program quality also seeds the UI store, and the startup
+  // workspace decides which layout opens first.
   useEffect(() => {
     const s = useSettings.getState();
     applyDocumentSettings(s);
     useUI.setState({ programQuality: s.defaultProgramQuality });
+    // Workspace at launch: a fixed one, or the last used (persisted below).
+    const valid: string[] = ['assembly', 'editing', 'color', 'effects', 'audio', 'graphics', 'captions', 'review', 'export'];
+    if (s.startupWorkspace === 'last') {
+      const w = localStorage.getItem('vsp.lastWorkspace');
+      if (w && valid.includes(w)) useUI.setState({ workspace: w as any });
+    } else if (valid.includes(s.startupWorkspace)) {
+      useUI.setState({ workspace: s.startupWorkspace as any });
+    }
     return useSettings.subscribe((next) => {
       applyDocumentSettings(next);
       if (next.defaultProgramQuality !== useUI.getState().programQuality) useUI.setState({ programQuality: next.defaultProgramQuality });
+    });
+  }, []);
+
+  // Remember the workspace for the 'last used' startup option.
+  useEffect(() => {
+    localStorage.setItem('vsp.lastWorkspace', useUI.getState().workspace);
+    return useUI.subscribe((state, prev) => {
+      if (state.workspace !== prev.workspace) localStorage.setItem('vsp.lastWorkspace', state.workspace);
     });
   }, []);
 
@@ -220,7 +237,7 @@ function App() {
     let cancelled = false;
     autosaveInfo().then((info) => {
       if (cancelled) return;
-      const skip = localStorage.getItem('vsp.skipWelcome') === '1';
+      const skip = !useSettings.getState().showWelcomeOnStartup;
       if (info) {
         toast('info', 'Autosave available', `${info.name} from ${new Date(info.at).toLocaleString()}. Open it from File, Open Autosaved Version.`);
         logEvent('info', 'Autosave found', `${info.name} at ${new Date(info.at).toLocaleString()}`);

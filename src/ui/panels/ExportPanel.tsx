@@ -2,26 +2,16 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useProject, useActiveSequence, sequenceDuration } from '../../state/projectStore';
 import { useUI, toast, logEvent } from '../../state/uiStore';
 import { usePlayback, renderFrameToCanvas } from '../../engine/playback/playback';
-import { Button, Select, Checkbox, HotText, TextField, TimecodeField, Empty, Segmented } from '../controls';
+import { Button, IconButton, Select, Checkbox, HotText, TextField, TimecodeField, Empty, Segmented } from '../controls';
 import { Icon } from '../icons';
-import { defaultExportSettings, exportSequence, exportRange, probeEncoders, ExportCancelled, type ExportSettings, type ExportProgress, type ExportContainer } from '../../engine/export/exporter';
+import { defaultExportSettings, exportSequence, exportRange, probeEncoders, applyAppExportDefaults, EXPORT_PRESETS, ExportCancelled, type ExportSettings, type ExportProgress, type ExportContainer } from '../../engine/export/exporter';
+import { useRenderQueue } from '../../engine/export/queue';
+import { useSettings } from '../../state/settingsStore';
+import { playChime } from '../../engine/audio/notify';
 import { download, formatBytes, formatDurationShort } from '../../engine/util';
 import { framesToTimecode } from '../../engine/timecode';
-import type { Sequence } from '../../types/project';
 
-type Preset = { id: string; name: string; apply: (s: ExportSettings, seq: Sequence) => Partial<ExportSettings> };
-const PRESETS: Preset[] = [
-  { id: 'match', name: 'Match Source - High bitrate', apply: (_s, seq) => ({ container: 'mp4', videoCodec: 'avc', audioCodec: 'aac', width: seq.settings.width, height: seq.settings.height, fps: seq.settings.fps, quality: 'high', videoBitrate: Math.round((seq.settings.width * seq.settings.height * seq.settings.fps * 0.12) / 1000) }) },
-  { id: 'yt1080', name: 'YouTube 1080p', apply: () => ({ container: 'mp4', videoCodec: 'avc', audioCodec: 'aac', width: 1920, height: 1080, quality: 'high', videoBitrate: 12000, audioBitrate: 320, keyframeInterval: 2 }) },
-  { id: 'yt4k', name: 'YouTube 2160p (4K)', apply: () => ({ container: 'mp4', videoCodec: 'avc', audioCodec: 'aac', width: 3840, height: 2160, quality: 'veryHigh', videoBitrate: 45000, audioBitrate: 320 }) },
-  { id: 'vertical', name: 'Vertical 1080x1920 (Shorts / Reels)', apply: () => ({ container: 'mp4', videoCodec: 'avc', audioCodec: 'aac', width: 1080, height: 1920, quality: 'high', videoBitrate: 10000, scaleMode: 'fill' }) },
-  { id: 'square', name: 'Square 1080x1080', apply: () => ({ container: 'mp4', videoCodec: 'avc', audioCodec: 'aac', width: 1080, height: 1080, quality: 'high', videoBitrate: 8000, scaleMode: 'fill' }) },
-  { id: 'webm', name: 'WebM VP9 (web)', apply: () => ({ container: 'webm', videoCodec: 'vp9', audioCodec: 'opus', quality: 'high' }) },
-  { id: 'proxy', name: 'Proxy 720p low bitrate', apply: () => ({ container: 'mp4', videoCodec: 'avc', audioCodec: 'aac', width: 1280, height: 720, quality: 'low', videoBitrate: 2500, audioBitrate: 128 }) },
-  { id: 'gif', name: 'Animated GIF (max 720 px)', apply: () => ({ container: 'gif', width: 720, height: 405, fps: 15, includeAudio: false }) },
-  { id: 'wav', name: 'Audio only - WAV 48 kHz', apply: () => ({ container: 'wav', includeVideo: false, includeAudio: true }) },
-  { id: 'png', name: 'PNG image sequence', apply: () => ({ container: 'png', includeAudio: false }) },
-];
+const PRESETS = EXPORT_PRESETS;
 
 const CONTAINERS: { value: ExportContainer; label: string; group: string }[] = [
   { value: 'mp4', label: 'H.264 / HEVC / AV1 (.mp4)', group: 'Video' },
@@ -51,11 +41,26 @@ export function ExportPanel({ inModal, onClose }: { inModal?: boolean; onClose?:
   const [previewFrame, setPreviewFrame] = useState<number | null>(null);
   const [tab, setTab] = useState<'video' | 'audio' | 'advanced'>('video');
   const [lastSeqId, setLastSeqId] = useState<string | null>(null);
+  const qItems = useRenderQueue((s) => s.items);
+  const qRunning = useRenderQueue((s) => s.running);
+
+  const addToQueue = () => {
+    if (!seq || !settings) return;
+    useRenderQueue.getState().add(seq.id, seq.name, settings);
+    toast('success', 'Added to Render Queue', `${settings.filename}.${settings.container} - press Start Queue when ready.`);
+  };
 
   useEffect(() => {
     if (!seq) return;
     if (!settings || lastSeqId !== seq.id) {
-      setSettings(defaultExportSettings(seq, seq.name));
+      // Settings > Export: opening preset, filename mode and caption default.
+      const st = useSettings.getState();
+      setSettings(applyAppExportDefaults(defaultExportSettings(seq, seq.name), seq, {
+        exportDefaultPreset: st.exportDefaultPreset,
+        exportFilenameMode: st.exportFilenameMode,
+        exportBurnCaptions: st.exportBurnCaptions,
+        projectName: project.settings.name,
+      }));
       setLastSeqId(seq.id);
       setResult(null);
     }
@@ -123,12 +128,14 @@ export function ExportPanel({ inModal, onClose }: { inModal?: boolean; onClose?:
     try {
       const r = await exportSequence(project, seq, settings, setProgress, ac.signal);
       setResult({ blob: r.blob, filename: r.filename, frames: r.frames, seconds: r.durationSeconds });
-      download(r.blob, r.filename);
+      if (useSettings.getState().exportAutoDownload) download(r.blob, r.filename);
+      if (useSettings.getState().soundOnExport) playChime('success');
       toast('success', 'Export complete', `${r.filename} (${formatBytes(r.blob.size)}) in ${formatDurationShort(r.durationSeconds)}`);
       logEvent('info', `Export finished: ${r.filename}`, `${formatBytes(r.blob.size)}, ${r.frames} frames`);
     } catch (e) {
       if (e instanceof ExportCancelled) toast('info', 'Export cancelled');
       else {
+        if (useSettings.getState().soundOnExport) playChime('error');
         toast('error', 'Export failed', String((e as Error).message ?? e));
         logEvent('error', 'Export failed', String((e as Error).stack ?? e));
       }
@@ -332,12 +339,54 @@ export function ExportPanel({ inModal, onClose }: { inModal?: boolean; onClose?:
             ) : null}
           </div>
         </div>
+        {qItems.length ? (
+          <div style={{ marginTop: 12, borderTop: '1px solid var(--c-line)', paddingTop: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+              <Icon name="archive" size={13} />
+              <span style={{ fontSize: 12, color: 'var(--c-text-bright)' }}>Render Queue</span>
+              <span className="dim" style={{ fontSize: 11 }}>{qItems.filter((i) => i.status === 'pending' || i.status === 'running').length} queued - items render from the latest project state</span>
+              <span className="spacer" />
+              {qRunning ? (
+                <Button sm danger onClick={() => useRenderQueue.getState().stop()}>Stop Queue</Button>
+              ) : (
+                <Button sm primary icon="play" onClick={() => void useRenderQueue.getState().start()} disabled={!qItems.some((i) => i.status === 'pending' || i.status === 'error')}>Start Queue</Button>
+              )}
+              <Button sm onClick={() => useRenderQueue.getState().clearFinished()} disabled={qRunning}>Clear Finished</Button>
+            </div>
+            {qItems.map((it) => (
+              <div key={it.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 2px', borderBottom: '1px solid var(--c-line-faint)', fontSize: 11 }}>
+                <Icon
+                  name={it.status === 'done' ? 'check' : it.status === 'error' ? 'error' : it.status === 'running' ? 'spinner' : 'clock'}
+                  size={11}
+                  style={{ color: it.status === 'done' ? 'var(--c-ok)' : it.status === 'error' ? 'var(--c-danger)' : it.status === 'running' ? 'var(--c-accent-text)' : 'var(--c-text-faint)' }}
+                />
+                <span style={{ color: 'var(--c-text)' }}>{it.seqName}</span>
+                <span className="dim" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.settings.filename}.{it.settings.container}</span>
+                {it.status === 'running' ? (
+                  <span className="progress" style={{ width: 80, margin: 0, flexShrink: 0 }}><div style={{ width: `${Math.round(it.progress * 100)}%` }} /></span>
+                ) : null}
+                {it.status === 'error' && it.error ? <span style={{ color: 'var(--c-danger)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.error}</span> : null}
+                {it.status === 'done' && it.result ? <span className="dim">{formatBytes(it.result.size)}</span> : null}
+                <span className="spacer" />
+                {it.status === 'done' && it.result ? <Button sm onClick={() => download(it.result!.blob, it.result!.filename)}>Download</Button> : null}
+                {it.status !== 'running' ? <IconButton icon="close" label="Remove from queue" sm noline onClick={() => useRenderQueue.getState().remove(it.id)} /> : null}
+              </div>
+            ))}
+          </div>
+        ) : null}
       </div>
       <div className="modal-footer" style={{ display: 'flex', gap: 8, padding: '8px 12px', borderTop: '1px solid var(--c-line)', alignItems: 'center' }}>
         <span style={{ color: 'var(--c-text-dim)', fontSize: 11 }}>{project.settings.name}</span>
         <span className="spacer" />
         {onClose ? <Button onClick={onClose} disabled={busy}>{inModal ? 'Close' : 'Cancel'}</Button> : null}
-        {busy ? <Button danger onClick={() => abortRef.current?.abort()}>Stop export</Button> : <Button primary onClick={start} disabled={!summary || summary.frames <= 0} icon="export">Export</Button>}
+        {busy ? (
+          <Button danger onClick={() => abortRef.current?.abort()}>Stop export</Button>
+        ) : (
+          <>
+            <Button icon="archive" onClick={addToQueue} disabled={!summary || summary.frames <= 0} title="Queue these settings; the batch runs from Start Queue">Add to Queue</Button>
+            <Button primary onClick={start} disabled={!summary || summary.frames <= 0} icon="export">Export</Button>
+          </>
+        )}
       </div>
     </div>
   );

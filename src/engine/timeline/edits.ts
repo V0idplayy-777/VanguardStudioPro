@@ -4,6 +4,7 @@ import { uid, deepClone } from '../util';
 import { clipsOnTrack, makeClip, newTrack, renumberTracks } from '../../state/projectStore';
 import { shiftKeyframes } from '../keyframes';
 import { TRANSITION_MAP } from '../effects/transitions';
+import { settings } from '../../state/settingsStore';
 
 /*
   Pure-ish timeline operations. They mutate the passed Sequence (which is a
@@ -261,6 +262,13 @@ export function placeAsset(project: Project, seq: Sequence, asset: MediaAsset, f
       generatorParams: asset.generatorParams ? { ...asset.generatorParams } : undefined,
       graphic: asset.graphic ? deepClone(asset.graphic) : undefined,
     });
+    // Settings > Import: scale placed media to fit or fill the frame.
+    const scaleMode = settings().importScaleMode;
+    if (scaleMode !== 'native' && (asset.kind === 'video' || asset.kind === 'image') && asset.width && asset.height) {
+      const f = scaleMode === 'fit' ? Math.min : Math.max;
+      const s = f(seq.settings.width / asset.width, seq.settings.height / asset.height) * 100;
+      clip.motion.scale = param(Math.round(s * 10) / 10);
+    }
     seq.clips.push(clip);
     created.push(clip.id);
   }
