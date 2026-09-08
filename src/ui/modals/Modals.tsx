@@ -3084,6 +3084,10 @@ function WelcomeModal({ close }: P) {
     close();
     if (missing.length) useUI.getState().openModal({ kind: 'linkMedia', payload: { assetIds: missing.map((m) => m.id) } });
   };
+  const startTour = () => {
+    close();
+    void import('../../state/tutorialStore').then((m) => m.useTutorial.getState().start());
+  };
   const actions: { icon: IconName; t: string; d: string; run: () => void }[] = [
     { icon: 'import', t: 'Import media', d: 'Video, audio, images, SRT captions. You can also drop files anywhere in the window.', run: () => { close(); void cmd.importMedia(); } },
     { icon: 'sequence', t: 'New sequence', d: 'Pick a frame size and timebase. Sequence 01 (1080p30) is already open and empty.', run: () => { close(); cmd.newSequence(); } },
@@ -3096,7 +3100,20 @@ function WelcomeModal({ close }: P) {
         <div style={{ fontSize: 15, color: 'var(--c-text-bright)' }}>Vanguard Studio Pro</div>
         <div style={{ color: 'var(--c-text-dim)', fontSize: 12, marginTop: 2 }}>A full non-linear editor in a browser tab. Your media never leaves this machine.</div>
       </div>
-      <div className="welcome">
+
+      <div className="welcome-tutorial-cta">
+        <div className="cta-icon"><Icon name="sparkle" size={18} /></div>
+        <div className="cta-body">
+          <div className="cta-title">New here? Take the 2-minute tour</div>
+          <div className="cta-desc">We'll guide you through creating your first clip — sample background, title, effect, and export. Fully interactive, skippable anytime, replayable from Help menu.</div>
+          <div className="cta-actions">
+            <Button primary icon="sparkle" onClick={startTour}>Start tutorial</Button>
+            <Button onClick={close}>Skip for now</Button>
+          </div>
+        </div>
+      </div>
+
+      <div className="welcome" style={{ marginTop: 16 }}>
         {actions.map((a) => (
           <button key={a.t} type="button" className="big-btn" onClick={a.run}>
             <Icon name={a.icon} size={16} />

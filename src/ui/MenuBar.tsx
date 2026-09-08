@@ -314,9 +314,11 @@ export function MenuBar() {
     {
       title: 'Help',
       items: () => [
-        { label: 'Keyboard Shortcuts...', shortcut: sc('shortcuts'), onSelect: () => openModal({ kind: 'keyboardShortcuts' }) },
+        { label: 'Welcome Tutorial (First-time tour)', shortcut: 'F1', onSelect: () => cmd.startTutorial() },
         { label: 'Welcome Screen', onSelect: () => openModal({ kind: 'welcome' }) },
+        { label: 'Keyboard Shortcuts...', shortcut: sc('shortcuts'), onSelect: () => openModal({ kind: 'keyboardShortcuts' }) },
         { label: 'Learn Panel', onSelect: () => useLayout.getState().openPanel(ws, 'learn') },
+        { label: 'Reset Tutorial Progress', onSelect: () => cmd.resetTutorial() },
         { separator: true },
         { label: `Effects installed: ${EFFECTS.length} video, ${AUDIO_EFFECTS.length} audio, ${TRANSITIONS.length + AUDIO_TRANSITIONS.length} transitions`, disabled: true },
         { separator: true },
