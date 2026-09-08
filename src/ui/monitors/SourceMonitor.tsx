@@ -3,7 +3,8 @@ import { useProject, findAsset } from '../../state/projectStore';
 import { useUI } from '../../state/uiStore';
 import { IconButton, TimecodeField, useElementSize, Select, Empty } from '../controls';
 import { cmd } from '../../app/commands';
-import { getMedia, onMediaChange, isVideoAsset } from '../../engine/media/mediaStore';
+import { getMedia, onMediaChange, isVideoAsset, isProxyActive } from '../../engine/media/mediaStore';
+import { useSettings } from '../../state/settingsStore';
 import { assetPoster } from '../timeline/thumbnails';
 import { getSharedAudioContext, resumeAudio } from '../../engine/audio/audioContext';
 import { MIME_ASSETS, MIME_SOURCE, useTimelineView } from '../timeline/timelineState';
@@ -33,6 +34,7 @@ export function SourceMonitor() {
   const dur = asset?.duration ?? (asset ? 5 : 0);
   const durFrames = Math.max(1, Math.round(dur * fps));
   const recent = useUI((s) => s.recentSources);
+  const proxiesOn = useSettings((s) => s.proxyEnabled);
 
   useEffect(() => onMediaChange(() => setMediaTick((t) => t + 1)), []);
 
@@ -77,8 +79,8 @@ export function SourceMonitor() {
         try {
           // Scrubbing seeks all over the file; use the scratch decode session
           // so it never stalls the sequential iterator program playback uses.
-          const { getScratchVideo } = await import('../../engine/media/mediaStore');
-          const v = (await getScratchVideo(rec).catch(() => null)) ?? rec.video;
+          const { getScratchVideo, isProxyActive } = await import('../../engine/media/mediaStore');
+          const v = (isProxyActive(asset, rec) && rec.proxyVideo) || (await getScratchVideo(rec).catch(() => null)) || rec.video;
           const img = await v.getFrame(time);
           if (cancelled || !img) return;
           ctx.drawImage(img as CanvasImageSource, 0, 0, W, H);
@@ -94,7 +96,7 @@ export function SourceMonitor() {
     return () => {
       cancelled = true;
     };
-  }, [asset?.id, time, geom, mediaTick, sourceMode]);
+  }, [asset?.id, time, geom, mediaTick, sourceMode, proxiesOn]);
 
   // Playback loop (video via rAF, audio via WebAudio)
   useEffect(() => {
@@ -202,6 +204,13 @@ export function SourceMonitor() {
           <span style={{ color: 'var(--c-text-dim)' }}>Source</span>
         )}
         <div className="spacer" />
+        {asset && asset.proxy?.status === 'ready' ? (
+          <span className={`badge-dim proxy-badge${proxiesOn ? ' on' : ''}`} title={proxiesOn ? 'Playing the proxy file. Toggle with Shift+P.' : 'A proxy exists but proxy playback is off (Shift+P).'}>
+            {proxiesOn ? 'PROXY' : 'PROXY OFF'}
+          </span>
+        ) : asset?.proxy?.status === 'pending' ? (
+          <span className="badge-dim" title="Proxy is generating…">PROXY…</span>
+        ) : null}
         {asset && asset.kind !== 'image' ? (
           <div className="seg" role="group" aria-label="Source display">
             <button type="button" className={sourceMode === 'composite' ? 'on' : ''} onClick={() => setSourceMode('composite')} title="Show video">Video</button>

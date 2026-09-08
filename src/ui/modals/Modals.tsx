@@ -8,7 +8,7 @@ import { Icon, Swatch, type IconName } from '../icons';
 import { cmd, pickAudioClip, splitScreenCells } from '../../app/commands';
 import { MONTAGE_ASPECTS } from '../../engine/montage/montage';
 import { EXPORT_PRESETS } from '../../engine/export/exporter';
-import { SHORTCUTS } from '../../app/shortcuts';
+import { SHORTCUTS, shortcutFor } from '../../app/shortcuts';
 import { ExportPanel } from '../panels/ExportPanel';
 import { LABEL_COLORS, MARKER_COLORS, DEFAULT_SEQUENCE_SETTINGS, type LabelColor, type Marker, type MarkerKind, type SequenceSettings, type Clip } from '../../types/project';
 import { framesToTimecode } from '../../engine/timecode';
@@ -24,6 +24,7 @@ import { TRANSITIONS, AUDIO_TRANSITIONS } from '../../engine/effects/transitions
 import { blankTextDocument, shapeLayer } from '../graphics/templates';
 import * as E from '../../engine/timeline/edits';
 import { evalNumber } from '../../engine/keyframes';
+import { ProxyManagerModal, TranscribeModal, MagicMaskModal, VoiceCleanupModal, ShortcutEditor } from './FeatureModals';
 
 export const APP_VERSION = '1.1.0';
 export const BUILD_ID = '2026.09.07';
@@ -118,6 +119,14 @@ export function ModalHost() {
       return <AutoMontageModal {...props} />;
     case 'greenScreen':
       return <GreenScreenModal {...props} />;
+    case 'proxyManager':
+      return <ProxyManagerModal {...props} />;
+    case 'transcribe':
+      return <TranscribeModal {...props} />;
+    case 'magicMask':
+      return <MagicMaskModal {...props} />;
+    case 'voiceCleanup':
+      return <VoiceCleanupModal {...props} />;
     default:
       return null;
   }
@@ -1209,7 +1218,7 @@ function ShortcutsModal({ close }: P) {
   const cats = [...new Set(SHORTCUTS.map((s) => s.category))];
   const match = (s: (typeof SHORTCUTS)[number]) => !q || s.label.toLowerCase().includes(q.toLowerCase()) || s.keys.toLowerCase().includes(q.toLowerCase());
   return (
-    <Modal title="Keyboard Shortcuts" icon="keyboard" onClose={close} width={760}>
+    <Modal title="Keyboard Shortcuts" icon="keyboard" onClose={close} width={760} footer={<><span className="dim" style={{ fontSize: 11 }}>Remapped bindings are marked and apply everywhere.</span><span className="spacer" /><Button onClick={() => useUI.getState().openModal({ kind: 'preferences', payload: { tab: 'keyboard' } })}>Customize…</Button><Button primary onClick={close}>Done</Button></>}>
       <TextField value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter shortcuts" icon="search" autoFocus style={{ marginBottom: 10, width: 260 }} />
       <div className="scroll-y" style={{ maxHeight: '60vh' }}>
         <div className="kbd-grid">
@@ -1223,7 +1232,7 @@ function ShortcutsModal({ close }: P) {
                   <div key={s.id} className="kb-row">
                     <span className="nm">{s.label}</span>
                     <span className="spacer" />
-                    <span style={{ display: 'flex', gap: 3 }}>{s.keys.split('+').map((k) => <Kbd key={k}>{k}</Kbd>)}</span>
+                    <span style={{ display: 'flex', gap: 3, alignItems: 'center' }}>{(() => { const eff = shortcutFor(s.id); const changed = eff !== undefined && eff !== s.keys; const shown = eff ?? (s.keys || '—'); return (<>{shown === '—' ? <span className="dim">—</span> : shown.split('+').map((k) => <Kbd key={k}>{k}</Kbd>)}{changed ? <span className="pill proxy-pill" style={{ marginLeft: 2 }} title={`Default was: ${s.keys || 'unbound'}`}>remapped</span> : null}</>); })()}</span>
                   </div>
                 ))}
               </React.Fragment>
@@ -1243,7 +1252,7 @@ function ShortcutsModal({ close }: P) {
 
 /* ---------- Settings (categorized, searchable) ---------- */
 
-type SettingsCat = 'general' | 'appearance' | 'import' | 'timeline' | 'playback' | 'audio' | 'export' | 'captions' | 'workspace' | 'notifications' | 'accessibility' | 'performance' | 'storage' | 'autosave' | 'experimental';
+type SettingsCat = 'general' | 'appearance' | 'import' | 'timeline' | 'playback' | 'audio' | 'export' | 'captions' | 'workspace' | 'notifications' | 'accessibility' | 'performance' | 'storage' | 'autosave' | 'experimental' | 'keyboard';
 
 const SETTINGS_CATS: { id: SettingsCat; label: string; icon: IconName; blurb: string }[] = [
   { id: 'general', label: 'General', icon: 'settings', blurb: 'Project defaults: transitions, timecode, labels.' },
@@ -1261,6 +1270,7 @@ const SETTINGS_CATS: { id: SettingsCat; label: string; icon: IconName; blurb: st
   { id: 'storage', label: 'Storage & Privacy', icon: 'database', blurb: 'What lives in this browser, and how to clear it.' },
   { id: 'autosave', label: 'Auto Save', icon: 'panelHistory', blurb: 'Automatic project snapshots.' },
   { id: 'experimental', label: 'Experimental', icon: 'panelEffects', blurb: 'Render pipeline switches. Off by default? Good - leave it.' },
+  { id: 'keyboard', label: 'Keyboard', icon: 'keyboard', blurb: 'Remap every shortcut. Click a binding, press keys, done.' },
 ];
 
 /* ---------- Settings > Storage & Privacy ---------- */
@@ -1291,7 +1301,8 @@ function StorageSettings({ onNavigate }: { onNavigate: (t: SettingsCat) => void 
       const live = new Set(project.assets.map((a) => a.id));
       let n = 0;
       for (const k of keys) {
-        if (!live.has(k)) {
+        const base = k.startsWith('proxy:') || k.startsWith('clean:') ? k.slice(k.indexOf(':') + 1) : k;
+        if (!live.has(base)) {
           await deleteMediaBlob(k);
           n++;
         }
@@ -1351,11 +1362,12 @@ function StorageSettings({ onNavigate }: { onNavigate: (t: SettingsCat) => void 
   );
 }
 
-function PreferencesModal({ close }: P) {
+function PreferencesModal({ modal, close }: P) {
   const ui = useUI();
   const project = useProject((s) => s.project);
   const st = useSettings();
-  const [tab, setTab] = useState<SettingsCat>('general');
+  const initialTab = (modal.payload?.tab as SettingsCat | undefined) ?? 'general';
+  const [tab, setTab] = useState<SettingsCat>(SETTINGS_CATS.some((c) => c.id === initialTab) ? initialTab : 'general');
   const [q, setQ] = useState('');
   const set = (label: string, fn: (s: typeof project.settings) => void) => useProject.getState().update(label, (p) => fn(p.settings));
   const S = project.settings;
@@ -1512,6 +1524,26 @@ function PreferencesModal({ close }: P) {
               <Row label="End on the last video frame" desc={SETTINGS_META.parkOnLastFrame.hint}>
                 <Checkbox checked={st.parkOnLastFrame} onChange={(v) => st.set('parkOnLastFrame', v)} />
               </Row>
+              <div className="settings-section-title">Proxy media</div>
+              {searchHit('proxy', 'proxies', 'playback') ? (
+                <>
+                  <Row label="Use proxies when available" desc={SETTINGS_META.proxyEnabled.hint}>
+                    <Checkbox checked={st.proxyEnabled} onChange={(v) => st.set('proxyEnabled', v)} />
+                  </Row>
+                  <Row label="Proxy size" desc={SETTINGS_META.proxyScale.hint}>
+                    <Segmented value={st.proxyScale} options={[{ value: '720p', label: '720p' }, { value: '540p', label: '540p' }, { value: '360p', label: '360p' }]} onChange={(v) => st.set('proxyScale', v)} />
+                  </Row>
+                  <Row label="Proxy codec">
+                    <Segmented value={st.proxyCodec} options={[{ value: 'h264', label: 'H.264' }, { value: 'vp9', label: 'VP9' }]} onChange={(v) => st.set('proxyCodec', v)} />
+                  </Row>
+                  <Row label="Offer proxies for HD+ footage" desc={SETTINGS_META.proxyAutoOffer.hint}>
+                    <Checkbox checked={st.proxyAutoOffer} onChange={(v) => st.set('proxyAutoOffer', v)} />
+                  </Row>
+                  <Row label="Manage" desc="Create, attach or delete proxies for any asset.">
+                    <Button sm onClick={() => useUI.getState().openModal({ kind: 'proxyManager' })}>Open Proxy Manager…</Button>
+                  </Row>
+                </>
+              ) : null}
               <div className="settings-section-title">Transport</div>
               <Row label="Shuttle" desc="J/K/L step through 1x, 2x, 4x, 8x. Space plays at 1x.">
                 <span className="dim" style={{ fontSize: 11 }}>J K L</span>
@@ -1603,6 +1635,20 @@ function PreferencesModal({ close }: P) {
                 <Row label="Max width">
                   <HotText value={S.captionDefaults.maxWidth * 100} min={20} max={100} step={1} unit="%" width={62} onChange={(v, c) => c && set('Caption defaults', (s) => (s.captionDefaults.maxWidth = v / 100))} />
                 </Row>
+              ) : null}
+              <div className="settings-section-title">Speech-to-text</div>
+              {searchHit('transcribe', 'transcription', 'speech', 'whisper', 'model', 'language') ? (
+                <>
+                  <Row label="Transcription model" desc={SETTINGS_META.sttModel.hint}>
+                    <Select value={st.sttModel} options={[{ value: 'tiny.en', label: 'Tiny (English)' }, { value: 'tiny', label: 'Tiny (multilingual)' }, { value: 'base', label: 'Base' }, { value: 'small', label: 'Small' }]} onChange={(v) => st.set('sttModel', v)} />
+                  </Row>
+                  <Row label="Transcription language" desc="Auto-detect works with the multilingual models.">
+                    <Select value={st.sttLanguage} options={[{ value: 'auto', label: 'Auto-detect' }, { value: 'en', label: 'English' }, { value: 'es', label: 'Spanish' }, { value: 'fr', label: 'French' }, { value: 'de', label: 'German' }, { value: 'it', label: 'Italian' }, { value: 'pt', label: 'Portuguese' }, { value: 'nl', label: 'Dutch' }, { value: 'ja', label: 'Japanese' }, { value: 'zh', label: 'Chinese' }]} onChange={(v) => st.set('sttLanguage', v)} />
+                  </Row>
+                  <Row label="Transcribe" desc="Turn the open sequence's audio into captions.">
+                    <Button sm onClick={() => useUI.getState().openModal({ kind: 'transcribe', payload: {} })}>Transcribe…</Button>
+                  </Row>
+                </>
               ) : null}
               <Row label="Current sequence" desc="Copy these defaults onto the open sequence's caption track.">
                 <Button sm onClick={() => {
@@ -1703,6 +1749,10 @@ function PreferencesModal({ close }: P) {
 
           {tab === 'storage' ? (
             <StorageSettings onNavigate={setTab} />
+          ) : null}
+
+          {tab === 'keyboard' ? (
+            <ShortcutEditor />
           ) : null}
 
           {tab === 'autosave' ? (

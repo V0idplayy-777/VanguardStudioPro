@@ -1,6 +1,7 @@
 import type { GraphicDocument, GraphicLayer, ShapeLayer, TextLayer, GraphicAnimation } from '../../types/project';
 import { param } from '../../types/project';
 import { uid } from '../../engine/util';
+import { useGraphicsLibrary, libraryEntryAsTemplate } from './library';
 
 /*
   Motion graphics templates. Each template builds a GraphicDocument sized to
@@ -234,10 +235,135 @@ export const TEMPLATES: GraphicTemplate[] = [
     description: 'A tabular-figure counter in the top-left corner; edit the text or animate it.',
     build: (w, h) => doc([textLayer('00:00', w * 0.05, h * 0.06, { name: 'Timer', fontSize: Math.round(h * 0.05), fontWeight: 460, tabularNums: true, fill: '#e0e0e0', background: { enabled: true, color: '#000000', opacity: 0.5, padding: Math.round(h * 0.01), radius: 2 }, pin: 'left' })], 'timer', 0, 0),
   },
+  {
+    id: 'title-cinematic',
+    name: 'Cinematic Opener',
+    category: 'Titles',
+    description: 'Tracked eyebrow, huge title and twin rules. A classic film opening.',
+    build: (w, h) =>
+      doc(
+        [
+          shapeLayer('rect', w / 2 - w * 0.16, h * 0.335, w * 0.32, Math.max(2, h * 0.003), { name: 'Rule top', fill: '#e0e0e0', animIn: anim('wipe', 0.6), animOut: anim('fade', 0.3) }),
+          textLayer('A VANGUARD PRODUCTION', w / 2, h * 0.375, { name: 'Eyebrow', align: 'center', anchor: 'center', fontSize: Math.round(h * 0.026), fontWeight: 500, tracking: Math.round(h * 0.012), allCaps: true, fill: '#c5c5c5', pin: 'center', animIn: anim('fade', 0.5, 0.3), animOut: anim('fade', 0.3) }),
+          textLayer('THE TITLE', w / 2, h * 0.5, { name: 'Title', align: 'center', anchor: 'center', verticalAlign: 'middle', fontSize: Math.round(h * 0.14), fontWeight: 680, tracking: Math.round(h * 0.006), allCaps: true, pin: 'center', animIn: anim('slideUp', 0.7, 0.4), animOut: anim('fade', 0.3) }),
+          shapeLayer('rect', w / 2 - w * 0.16, h * 0.645, w * 0.32, Math.max(2, h * 0.003), { name: 'Rule bottom', fill: '#e0e0e0', animIn: anim('wipe', 0.6, 0.2), animOut: anim('fade', 0.3) }),
+        ],
+        'title-cinematic',
+      ),
+  },
+  {
+    id: 'title-quote',
+    name: 'Quote Card',
+    category: 'Titles',
+    description: 'Oversized quotation mark with a centered quote and attribution.',
+    build: (w, h) =>
+      doc(
+        [
+          textLayer('“', w / 2, h * 0.3, { name: 'Mark', align: 'center', anchor: 'center', fontSize: Math.round(h * 0.22), fontWeight: 700, fill: '#3d7bd9', pin: 'center', animIn: anim('scale', 0.5, 0, 'back'), animOut: anim('fade', 0.3) }),
+          textLayer('Great stories are told\none frame at a time.', w / 2, h * 0.52, { name: 'Quote', align: 'center', anchor: 'center', verticalAlign: 'middle', fontSize: Math.round(h * 0.055), fontWeight: 460, italic: true, leading: 1.35, pin: 'center', animIn: anim('fade', 0.6, 0.25), animOut: anim('fade', 0.3) }),
+          textLayer('— YOUR NAME', w / 2, h * 0.72, { name: 'Attribution', align: 'center', anchor: 'center', fontSize: Math.round(h * 0.028), fontWeight: 500, tracking: Math.round(h * 0.008), allCaps: true, fill: '#c5c5c5', pin: 'center', animIn: anim('fade', 0.5, 0.5), animOut: anim('fade', 0.3) }),
+        ],
+        'title-quote',
+      ),
+  },
+  {
+    id: 'lt-breaking',
+    name: 'Breaking Banner',
+    category: 'Lower Thirds',
+    description: 'Bold accent block with headline and sub-line. Slides in from the left.',
+    build: (w, h) =>
+      doc(
+        [
+          shapeLayer('rect', w * 0.06, h * 0.76, w * 0.015, h * 0.15, { name: 'Accent', fill: '#c9463d', animIn: anim('slideLeft', 0.3), animOut: anim('fade', 0.25) }),
+          shapeLayer('rect', w * 0.075, h * 0.76, w * 0.34, h * 0.15, { name: 'Panel', fill: '#0d0d0d', opacity: param(82), animIn: anim('wipe', 0.35, 0.05), animOut: anim('fade', 0.25) }),
+          textLayer('BREAKING NEWS', w * 0.095, h * 0.775, { name: 'Kicker', fontSize: Math.round(h * 0.028), fontWeight: 700, tracking: 3, allCaps: true, fill: '#c9463d', animIn: anim('fade', 0.3, 0.3), animOut: anim('fade', 0.2) }),
+          textLayer('Headline goes here', w * 0.095, h * 0.815, { name: 'Headline', fontSize: Math.round(h * 0.048), fontWeight: 620, animIn: anim('slideLeft', 0.4, 0.2), animOut: anim('fade', 0.2) }),
+        ],
+        'lt-breaking',
+      ),
+  },
+  {
+    id: 'lt-duo',
+    name: 'Duo Lower Third',
+    category: 'Lower Thirds',
+    description: 'Right-aligned two-line credit with a hairline rule above.',
+    build: (w, h) =>
+      doc(
+        [
+          shapeLayer('rect', w * 0.62, h * 0.795, w * 0.32, Math.max(1, h * 0.002), { name: 'Rule', fill: '#e0e0e0', animIn: anim('wipe', 0.4), animOut: anim('fade', 0.25) }),
+          textLayer('Jane Doe', w * 0.94, h * 0.81, { name: 'Name', align: 'right', fontSize: Math.round(h * 0.052), fontWeight: 620, pin: 'right', animIn: anim('slideRight', 0.4, 0.1), animOut: anim('fade', 0.25) }),
+          textLayer('Director of Photography', w * 0.94, h * 0.868, { name: 'Role', align: 'right', fontSize: Math.round(h * 0.03), fontWeight: 400, fill: '#c5c5c5', pin: 'right', animIn: anim('fade', 0.4, 0.25), animOut: anim('fade', 0.25) }),
+        ],
+        'lt-duo',
+      ),
+  },
+  {
+    id: 'callout-badge',
+    name: 'Number Badge',
+    category: 'Callouts',
+    description: 'Numbered circle badge with a label — made for step-by-step videos.',
+    build: (w, h) => {
+      const d = h * 0.11;
+      return doc(
+        [
+          shapeLayer('ellipse', w * 0.12, h * 0.2, d, d, { name: 'Badge', fill: '#3d7bd9', animIn: anim('scale', 0.35, 0, 'back'), animOut: anim('scale', 0.2, 0, 'easeIn') }),
+          textLayer('1', w * 0.12 + d / 2, h * 0.2 + d / 2, { name: 'Number', align: 'center', anchor: 'center', verticalAlign: 'middle', fontSize: Math.round(d * 0.52), fontWeight: 700, animIn: anim('fade', 0.25, 0.2), animOut: anim('fade', 0.2) }),
+          textLayer('Step label', w * 0.12 + d + w * 0.012, h * 0.2 + d * 0.2, { name: 'Label', fontSize: Math.round(h * 0.038), fontWeight: 560, animIn: anim('slideRight', 0.35, 0.25), animOut: anim('fade', 0.2) }),
+        ],
+        'callout-badge',
+      );
+    },
+  },
+  {
+    id: 'social-cta-row',
+    name: 'Engage Bar',
+    category: 'Social',
+    description: 'Like / comment / subscribe pill pinned to the bottom center.',
+    build: (w, h) =>
+      doc(
+        [
+          shapeLayer('rect', w / 2 - w * 0.21, h * 0.875, w * 0.42, h * 0.07, { name: 'Pill', fill: '#141414', opacity: param(88), radius: Math.round(h * 0.035), animIn: anim('slideUp', 0.4), animOut: anim('slideDown', 0.3) }),
+          textLayer('LIKE    •    COMMENT    •    SUBSCRIBE', w / 2, h * 0.91, { name: 'Text', align: 'center', anchor: 'center', verticalAlign: 'middle', fontSize: Math.round(h * 0.028), fontWeight: 640, tracking: 2, allCaps: true, pin: 'center', animIn: anim('fade', 0.35, 0.2), animOut: anim('fade', 0.2) }),
+        ],
+        'social-cta-row',
+      ),
+  },
+  {
+    id: 'shape-frame-corners',
+    name: 'Focus Corners',
+    category: 'Shapes',
+    description: 'Camera-focus corner brackets that draw on around the frame.',
+    build: (w, h) => {
+      const m = w * 0.08,
+        my = h * 0.12,
+        len = w * 0.07,
+        sw = Math.max(3, h * 0.006);
+      const corner = (name: string, x: number, y: number, dx: number, dy: number, delay: number) => [
+        shapeLayer('line', x, y, len, 0, { name: name + ' H', stroke: '#e0e0e0', strokeEnabled: true, strokeWidth: sw, fillEnabled: false, x2: dx * len, y2: 0, animIn: anim('wipe', 0.4, delay), animOut: anim('fade', 0.25) }),
+        shapeLayer('line', x, y, 0, len, { name: name + ' V', stroke: '#e0e0e0', strokeEnabled: true, strokeWidth: sw, fillEnabled: false, x2: 0, y2: dy * len, animIn: anim('wipe', 0.4, delay), animOut: anim('fade', 0.25) }),
+      ];
+      return doc([...corner('TL', m, my, 1, 1, 0), ...corner('TR', w - m, my, -1, 1, 0.1), ...corner('BL', m, h - my, 1, -1, 0.2), ...corner('BR', w - m, h - my, -1, -1, 0.3)], 'shape-frame-corners', 0.8, 0.4);
+    },
+  },
+  {
+    id: 'credits-endcard',
+    name: 'End Card',
+    category: 'Credits',
+    description: 'Thanks-for-watching end card with an accent rule and upload line.',
+    build: (w, h) =>
+      doc(
+        [
+          textLayer('Thanks for watching', w / 2, h * 0.44, { name: 'Thanks', align: 'center', anchor: 'center', verticalAlign: 'middle', fontSize: Math.round(h * 0.085), fontWeight: 620, pin: 'center', animIn: anim('slideUp', 0.55), animOut: anim('fade', 0.3) }),
+          shapeLayer('rect', w / 2 - w * 0.05, h * 0.52, w * 0.1, Math.max(2, h * 0.005), { name: 'Rule', fill: '#3d7bd9', animIn: anim('wipe', 0.5, 0.3), animOut: anim('fade', 0.3) }),
+          textLayer('New videos every Friday', w / 2, h * 0.58, { name: 'Schedule', align: 'center', anchor: 'center', fontSize: Math.round(h * 0.034), fontWeight: 400, fill: '#c5c5c5', pin: 'center', animIn: anim('fade', 0.5, 0.5), animOut: anim('fade', 0.3) }),
+        ],
+        'credits-endcard',
+      ),
+  },
 ];
 
 export function templateById(id: string): GraphicTemplate | undefined {
-  return TEMPLATES.find((t) => t.id === id);
+  return TEMPLATES.find((t) => t.id === id) ?? useGraphicsLibrary.getState().entries.filter((e) => e.id === id).map(libraryEntryAsTemplate)[0];
 }
 
 export const TEMPLATE_CATEGORIES = Array.from(new Set(TEMPLATES.map((t) => t.category)));

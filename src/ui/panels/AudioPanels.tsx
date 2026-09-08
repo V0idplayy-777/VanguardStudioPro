@@ -261,6 +261,7 @@ export function AudioClipMixer() {
 }
 
 function ClipStrip({ track, clip, seq, playhead }: { track: Track; clip: Clip | null; seq: Sequence; playhead: number }) {
+  const cleanedPreset = useProject((s) => (clip?.assetId ? s.project.assets.find((a) => a.id === clip.assetId)?.cleanedAudio?.preset : undefined));
   const local = clip ? playhead - clip.start : 0;
   const vol = clip ? evalParam(clip.audio.volume, local) : -60;
   const pan = clip ? evalParam(clip.audio.pan, local) / 100 : 0;
@@ -288,6 +289,7 @@ function ClipStrip({ track, clip, seq, playhead }: { track: Track; clip: Clip | 
       <div className="btns">
         <button type="button" className={`m ${clip?.audio.muted ? 'on' : ''}`} title="Mute clip" disabled={!clip} onClick={() => write('Mute clip', (c) => { c.audio.muted = !c.audio.muted; }, false)}>M</button>
         <button type="button" className={clip?.audio.volume.animated ? 'on s' : ''} title="Write keyframes (toggle volume animation)" disabled={!clip} onClick={() => write('Toggle volume animation', (c) => { c.audio.volume = c.audio.volume.animated ? { value: evalParam(c.audio.volume, local), keyframes: [], animated: false } : { ...setKeyframe(c.audio.volume, local, evalParam(c.audio.volume, local)), animated: true }; }, false)}>W</button>
+        <button type="button" className={`m ${clip?.audio.enhanced ? 'on' : ''}`} title={cleanedPreset ? `Cleaned audio (${cleanedPreset}) — toggle to A/B against the original` : 'No cleaned take yet — select the clip and run Clip > Clean Up Voice'} disabled={!clip || !cleanedPreset} onClick={() => write('Toggle cleaned audio', (c) => { c.audio.enhanced = !c.audio.enhanced; }, false)}>C</button>
       </div>
     </div>
   );

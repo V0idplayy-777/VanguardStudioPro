@@ -14,7 +14,7 @@ const split = (dir: SplitDir, children: LayoutNode[], sizes?: number[]): LayoutN
 export function presetLayout(ws: WorkspaceId): LayoutNode {
   switch (ws) {
     case 'assembly':
-      return split('row', [split('col', [g(['project', 'mediaBrowser', 'libraries']), g(['effects', 'markers', 'history', 'info'])], [0.62, 0.38]), split('col', [g(['program', 'source']), g(['timeline'])], [0.55, 0.45])], [0.32, 0.68]);
+      return split('row', [split('col', [g(['project', 'mediaBrowser', 'libraries']), g(['effects', 'markers', 'history', 'info'])], [0.62, 0.38]), split('col', [g(['program', 'source']), g(['storyboard', 'timeline'])], [0.55, 0.45])], [0.32, 0.68]);
     case 'color':
       return split('row', [split('col', [g(['scopes']), g(['project', 'effects'])], [0.58, 0.42]), split('col', [g(['program', 'source']), g(['timeline'])], [0.55, 0.45]), g(['lumetri', 'effectControls'])], [0.24, 0.5, 0.26]);
     case 'effects':
@@ -185,6 +185,7 @@ const PANEL_HOME: Partial<Record<PanelId, PanelId[]>> = {
   loudness: ['audioMeters', 'project'],
   libraries: ['project'],
   mediaBrowser: ['project'],
+  storyboard: ['timeline', 'program'],
   learn: ['effectControls', 'project'],
   tools: ['project'],
   export: ['source', 'project'],
@@ -321,5 +322,6 @@ export const PANEL_TITLES: Record<PanelId, string> = {
   tools: 'Tools',
   loudness: 'Loudness',
   mediaBrowser: 'Media Browser',
+  storyboard: 'Storyboard',
   learn: 'Learn',
 };

@@ -118,6 +118,8 @@ export async function restoreProjectMedia(project: Project, embedded?: Map<strin
         await relinkAsset(a, f, true);
         a.offline = false;
         restored++;
+        // Proxies + cleaned audio restore lazily in the background.
+        void import('../media/proxy').then((m) => m.restoreAssetDerivatives(a)).catch(() => undefined);
       } catch {
         a.offline = true;
         missing.push(a);

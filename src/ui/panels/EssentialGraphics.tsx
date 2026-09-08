@@ -6,6 +6,7 @@ import { HotText, Select, Checkbox, Button, IconButton, ColorChip, TextField, Em
 import { Icon } from '../icons';
 import type { Clip, GraphicDocument, GraphicLayer, TextLayer, ShapeLayer, GraphicAnimation, Sequence, Param } from '../../types/project';
 import { TEMPLATES, TEMPLATE_CATEGORIES, templateById, textLayer, shapeLayer, blankTextDocument } from '../graphics/templates';
+import { useGraphicsLibrary, libraryEntryAsTemplate } from '../graphics/library';
 import { renderGraphic } from '../../engine/graphics/graphicRenderer';
 import { MIME_TEMPLATE, useTimelineView } from '../timeline/timelineState';
 import { cmd } from '../../app/commands';
@@ -93,7 +94,8 @@ function addTextClip(seq: Sequence | null) {
 }
 
 function Browse({ q, setQ, seq }: { q: string; setQ: (s: string) => void; seq: Sequence | null }) {
-  const list = TEMPLATES.filter((t) => !q || t.name.toLowerCase().includes(q.toLowerCase()) || t.category.toLowerCase().includes(q.toLowerCase()));
+  const library = useGraphicsLibrary((s) => s.entries);
+  const list = [...TEMPLATES, ...library.map(libraryEntryAsTemplate)].filter((t) => !q || t.name.toLowerCase().includes(q.toLowerCase()) || t.category.toLowerCase().includes(q.toLowerCase()));
   const add = (id: string) => {
     if (!seq) return toast('info', 'No sequence', 'Create a sequence first.');
     const tpl = templateById(id)!;
@@ -121,7 +123,7 @@ function Browse({ q, setQ, seq }: { q: string; setQ: (s: string) => void; seq: S
               <div className="section-title" style={{ padding: '8px 8px 2px', color: 'var(--c-text-dim)', fontSize: 11 }}>{cat}</div>
               <div className="template-grid">
                 {items.map((t) => (
-                  <div key={t.id} className="template-card" draggable onDragStart={(e) => { e.dataTransfer.setData(MIME_TEMPLATE, t.id); e.dataTransfer.effectAllowed = 'copy'; useTimelineView.getState().setExternalDrag({ kind: 'template', id: t.id }); }} onDragEnd={() => useTimelineView.getState().setExternalDrag(null)} onDoubleClick={() => add(t.id)} title={`${t.description}\n\nDouble-click to add at the playhead, or drag into the timeline.`}>
+                  <div key={t.id} className="template-card" draggable onDragStart={(e) => { e.dataTransfer.setData(MIME_TEMPLATE, t.id); e.dataTransfer.effectAllowed = 'copy'; useTimelineView.getState().setExternalDrag({ kind: 'template', id: t.id }); }} onDragEnd={() => useTimelineView.getState().setExternalDrag(null)} onDoubleClick={() => add(t.id)} title={`${t.description}\n\nDouble-click to add at the playhead, or drag into the timeline.`} onContextMenu={library.some((e) => e.id === t.id) ? (e) => { e.preventDefault(); e.stopPropagation(); useUI.getState().openContextMenu(e.clientX, e.clientY, [{ label: 'Rename Template', onSelect: () => useUI.getState().openModal({ kind: 'rename', payload: { title: 'Rename Template', label: 'Template name', value: t.name, onSubmit: (n: string) => useGraphicsLibrary.getState().rename(t.id, n) } }) }, { label: 'Delete from Library', danger: true, onSelect: () => { useGraphicsLibrary.getState().remove(t.id); toast('success', 'Template deleted', `"${t.name}" was removed from your library.`); } }]); } : undefined}>
                     <TemplateThumb id={t.id} />
                     <div style={{ fontSize: 11, padding: '3px 2px 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</div>
                   </div>
@@ -211,6 +213,8 @@ function Edit({ clip, doc, seq, write, layerSel, local }: { clip: Clip; doc: Gra
         <span className="spacer" />
         <IconButton icon="arrowUp" label="Bring forward" sm disabled={!layer || idx === doc.layers.length - 1} onClick={() => move(idx, idx + 1)} />
         <IconButton icon="arrowDown" label="Send backward" sm disabled={!layer || idx === 0} onClick={() => move(idx, idx - 1)} />
+        <span style={{ width: 6 }} />
+        <Button sm icon="save" onClick={() => cmd.saveGraphicAsTemplate()} title="Save this graphic to your motion-graphics library">Save to Library</Button>
         <IconButton icon="duplicate" label="Duplicate layer" sm disabled={!layer} onClick={() => write('Duplicate layer', (d) => { const l = d.layers.find((x) => x.id === layer!.id)!; const c = JSON.parse(JSON.stringify(l)); c.id = uid('gl'); c.name += ' copy'; c.x = { ...c.x, value: c.x.value + 20 }; c.y = { ...c.y, value: c.y.value + 20 }; d.layers.splice(d.layers.indexOf(l) + 1, 0, c); setLayerSel([c.id]); })} />
         <IconButton icon="trash" label="Delete layer" sm disabled={!layer} onClick={() => write('Delete layer', (d) => { d.layers = d.layers.filter((x) => x.id !== layer!.id); setLayerSel([]); })} />
       </div>

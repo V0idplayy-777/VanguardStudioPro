@@ -467,9 +467,13 @@ export const cmd = {
     })();
   },
   removeEffects(clipIds: Id[]) {
-    mutateSeq('Remove effects', (seq) => {
-      for (const c of seq.clips) if (clipIds.includes(c.id)) c.effects = [];
+    const seq = seqNow();
+    const doomed = new Set<string>();
+    if (seq) for (const c of seq.clips) if (clipIds.includes(c.id)) for (const fx of c.effects) if (fx.type === 'magicMask' && typeof fx.data?.trackId === 'string') doomed.add(fx.data.trackId);
+    mutateSeq('Remove effects', (s) => {
+      for (const c of s.clips) if (clipIds.includes(c.id)) c.effects = [];
     });
+    if (doomed.size) void import('../engine/mask/maskStore').then((m) => Promise.all([...doomed].map((t) => m.deleteMaskTrack(t).catch(() => undefined))));
   },
   copyAttributes() {
     const clips = selectedClips();
@@ -854,6 +858,15 @@ export const cmd = {
     return asset;
   },
   deleteAssets(ids: Id[]) {
+    // Snapshot cache cleanups BEFORE the document update (blob/media-record disposal is not undoable).
+    const before = useProject.getState().project;
+    const deadAssets = new Set(ids.filter((id) => before.assets.some((a) => a.id === id)));
+    const deadMasks = new Set<string>();
+    for (const s of before.sequences)
+      for (const c of s.clips) {
+        if (!(c.assetId && deadAssets.has(c.assetId))) continue;
+        for (const fx of c.effects) if (fx.type === 'magicMask' && typeof fx.data?.trackId === 'string') deadMasks.add(fx.data.trackId);
+      }
     useProject.getState().update('Delete items', (p) => {
       // remove bins recursively
       const binIds = new Set<Id>();
@@ -865,6 +878,7 @@ export const cmd = {
       p.bins = p.bins.filter((b) => !binIds.has(b.id));
       const assetIds = new Set(ids.filter((id) => p.assets.some((a) => a.id === id)));
       for (const a of p.assets) if (a.binId && binIds.has(a.binId)) assetIds.add(a.id);
+      for (const a of p.assets) if (a.binId && binIds.has(a.binId)) deadAssets.add(a.id);
       const seqIds = new Set(p.assets.filter((a) => assetIds.has(a.id) && a.kind === 'sequence').map((a) => a.sequenceId));
       p.assets = p.assets.filter((a) => !assetIds.has(a.id));
       for (const s of p.sequences) s.clips = s.clips.filter((c) => !(c.assetId && assetIds.has(c.assetId)));
@@ -872,6 +886,18 @@ export const cmd = {
       p.openSequenceIds = p.openSequenceIds.filter((id) => !seqIds.has(id));
       if (p.activeSequenceId && seqIds.has(p.activeSequenceId)) p.activeSequenceId = p.openSequenceIds[0] ?? p.sequences[0]?.id ?? null;
     });
+    if (deadMasks.size) void import('../engine/mask/maskStore').then((m) => Promise.all([...deadMasks].map((t) => m.deleteMaskTrack(t).catch(() => undefined))));
+    if (deadAssets.size) {
+      void (async () => {
+        const { deleteProxyBlob, deleteCleanedAudio } = await import('../engine/media/mediaDb');
+        const [{ removeMedia, getMedia }] = [await import('../engine/media/mediaStore')];
+        for (const id of deadAssets) {
+          if (getMedia(id)?.proxyBlob) await deleteProxyBlob(id).catch(() => undefined);
+          await deleteCleanedAudio(id).catch(() => undefined);
+          removeMedia(id);
+        }
+      })();
+    }
     useUI.getState().clearSelection();
   },
   renameAsset(id: Id, name: string) {
@@ -926,6 +952,47 @@ export const cmd = {
       }
     });
     if (ids.length) useUI.getState().selectClips(ids);
+  },
+
+  /* proxies, captions, AI, graphics library */
+  /** Queue proxy encodes for every eligible project asset (opens the manager to watch progress). */
+  async createProxiesForProject() {
+    const { proxyCandidates, createProxiesForAssets } = await import('../engine/media/proxy');
+    const cands = proxyCandidates(useProject.getState().project);
+    if (!cands.length) return toast('info', 'Proxies', 'Every video asset already has a proxy.');
+    useUI.getState().openModal({ kind: 'proxyManager' });
+    void createProxiesForAssets(cands.map((a) => a.id));
+  },
+  async toggleProxyPlayback() {
+    const { toggleProxyPlayback } = await import('../engine/media/proxy');
+    toggleProxyPlayback();
+  },
+  /** Snapshot the selected graphic clip into the motion graphics library. */
+  saveGraphicAsTemplate() {
+    const seq = seqNow();
+    const clips = selectedClips().filter((c) => c.graphic && c.graphic.layers.length);
+    if (!seq || !clips.length) return toast('info', 'Save as template', 'Select a graphic clip on the timeline first.');
+    const clip = clips[0];
+    useUI.getState().openModal({
+      kind: 'rename',
+      payload: {
+        title: 'Save Graphic as Template',
+        label: 'Template name',
+        value: clip.name.replace(/\.[^.]+$/, ''),
+        onSubmit: async (name: string) => {
+          const { useGraphicsLibrary } = await import('../ui/graphics/library');
+          useGraphicsLibrary.getState().save(name, 'Titles', clip.graphic!, seq.settings.width, seq.settings.height, `Saved from ${clip.name}.`);
+          toast('success', 'Template saved', `"${name}" is now in your graphics library.`);
+          logEvent('info', `Graphic template saved: ${name}`);
+        },
+      },
+    });
+  },
+  /** Toggle the baked cleaned-audio take on clips (falls back to the original when missing). */
+  setClipEnhanced(ids: Id[], enhanced: boolean) {
+    mutateSeq(enhanced ? 'Use cleaned audio' : 'Use original audio', (seq) => {
+      for (const c of seq.clips) if (ids.includes(c.id)) c.audio.enhanced = enhanced;
+    });
   },
 
   /* color */

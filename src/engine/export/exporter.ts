@@ -284,7 +284,7 @@ export async function exportSequence(project: Project, seq: Sequence, settings: 
   const renderOut = async (i: number) => {
     const seqFrame = Math.round(startF + (i / outFps) * seqFps);
     comp.releaseAll();
-    const rt = await comp.renderFrame(project, seq, seqFrame, { scale: 1, captions: settings.burnCaptions });
+    const rt = await comp.renderFrame(project, seq, seqFrame, { scale: 1, captions: settings.burnCaptions, useProxy: false });
     comp.drawToCanvas(rt, tmp);
     comp.release(rt);
     fitDraw(fctx, tmp, W, H, settings.scaleMode);
@@ -554,7 +554,7 @@ export async function encodeCompressedAudio(buf: AudioBuffer, settings: ExportSe
 export async function exportFrame(project: Project, seq: Sequence, frame: number, format: 'png' | 'jpeg' = 'png'): Promise<Blob> {
   const comp = getCompositor();
   comp.releaseAll();
-  const rt = await comp.renderFrame(project, seq, frame, { scale: 1, captions: true });
+  const rt = await comp.renderFrame(project, seq, frame, { scale: 1, captions: true, useProxy: false });
   const c = document.createElement('canvas');
   comp.drawToCanvas(rt, c);
   comp.release(rt);

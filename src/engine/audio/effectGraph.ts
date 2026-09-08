@@ -38,6 +38,45 @@ function passthrough(ctx: BaseAudioContext): Built {
   return { input: g, output: g, nodes: [g] };
 }
 
+/** Static downward-expansion characteristic: quiet content pushed down, loud untouched. */
+function expanderCurve(threshold: number, ratio: number, knee: number): Float32Array<ArrayBuffer> {
+  const N = 1024;
+  const curve = new Float32Array(N);
+  const t = Math.max(1e-4, threshold);
+  const k = Math.max(1e-4, knee);
+  const norm = Math.pow(t, 1 - ratio); // power law passes through (t, t)
+  for (let i = 0; i < N; i++) {
+    const x = (i / (N - 1)) * 2 - 1;
+    const a = Math.abs(x);
+    let y: number;
+    if (a <= t - k / 2) {
+      y = Math.pow(a, ratio) * norm;
+    } else if (a >= t + k / 2) {
+      y = a;
+    } else {
+      const s = (a - (t - k / 2)) / k;
+      const blend = s * s * (3 - 2 * s);
+      y = (1 - blend) * (Math.pow(Math.max(a, 1e-6), ratio) * norm) + blend * a;
+    }
+    curve[i] = Math.sign(x) * Math.min(1, y);
+  }
+  return curve;
+}
+
+/** Soft ceiling: linear below `ceiling`, gently compressed above it. */
+function softCeilingCurve(ceiling: number): Float32Array<ArrayBuffer> {
+  const N = 512;
+  const curve = new Float32Array(N);
+  const c = Math.max(0.05, Math.min(1, ceiling));
+  for (let i = 0; i < N; i++) {
+    const x = (i / (N - 1)) * 2 - 1;
+    const a = Math.abs(x);
+    const y = a <= c ? a : c + (a - c) / (1 + ((a - c) / (1 - c + 1e-4)) * 3);
+    curve[i] = Math.sign(x) * Math.min(1, y);
+  }
+  return curve;
+}
+
 function buildOne(ctx: BaseAudioContext, e: EffectInstance): Built {
   const n = makeNum(e);
   const t = ctx.currentTime;
@@ -572,6 +611,126 @@ function buildOne(ctx: BaseAudioContext, e: EffectInstance): Built {
       };
       update(0);
       return { input: c, output: g, update, nodes: [c, g] };
+    }
+    case 'aHumRemove': {
+      // Series notch bank: fundamental + harmonics, with dry/wet mix.
+      const input = ctx.createGain();
+      const dry = ctx.createGain();
+      const wet = ctx.createGain();
+      const out = ctx.createGain();
+      input.connect(dry).connect(out);
+      let prev: AudioNode = input;
+      const notches: BiquadFilterNode[] = [];
+      for (let i = 0; i < 6; i++) {
+        const f = ctx.createBiquadFilter();
+        f.type = 'notch';
+        f.Q.value = 18;
+        prev.connect(f);
+        prev = f;
+        notches.push(f);
+      }
+      prev.connect(wet).connect(out);
+      const update = (fr: number) => {
+        const base = Math.round(n('frequency', fr)) === 0 ? 50 : 60;
+        const harm = Math.max(1, Math.min(6, Math.round(n('harmonics', fr))));
+        const q = Math.max(2, n('q', fr));
+        const mix = Math.max(0, Math.min(100, n('mix', fr))) / 100;
+        for (let i = 0; i < notches.length; i++) {
+          const active = i < harm;
+          notches[i].frequency.setTargetAtTime(Math.min(20000, base * (i + 1)), t, 0.01);
+          // park unused notches above hearing instead of bypass clicks
+          notches[i].Q.setTargetAtTime(active ? q : 0.5, t, 0.01);
+          notches[i].gain.setTargetAtTime(0, t, 0.01);
+          if (!active) notches[i].frequency.setTargetAtTime(21000, t, 0.01);
+        }
+        dry.gain.setTargetAtTime(1 - mix, t, 0.01);
+        wet.gain.setTargetAtTime(mix, t, 0.01);
+      };
+      update(0);
+      return { input, output: out, update, nodes: [input, dry, wet, out, ...notches] };
+    }
+    case 'aVoiceLeveler': {
+      // Slow AGC: gentle compressor with a long release + makeup + soft ceiling.
+      const c = ctx.createDynamicsCompressor();
+      const makeup = ctx.createGain();
+      const clipper = ctx.createWaveShaper();
+      clipper.oversample = '2x';
+      c.connect(makeup).connect(clipper);
+      const update = (fr: number) => {
+        const target = n('target', fr);
+        const strength = Math.max(0, Math.min(100, n('strength', fr))) / 100;
+        const maxGain = n('maxGain', fr);
+        const ceiling = Math.pow(10, n('ceiling', fr) / 20);
+        c.threshold.setTargetAtTime(target - 6, t, 0.05);
+        c.knee.setTargetAtTime(18, t, 0.05);
+        c.ratio.setTargetAtTime(1 + strength * 5, t, 0.05);
+        c.attack.setTargetAtTime(0.05, t, 0.05);
+        c.release.setTargetAtTime(1.2, t, 0.05);
+        makeup.gain.setTargetAtTime(dbToGain(Math.min(maxGain, 3 + strength * 9)), t, 0.05);
+        clipper.curve = softCeilingCurve(ceiling);
+      };
+      update(0);
+      return { input: c, output: clipper, update, nodes: [c, makeup, clipper] };
+    }
+    case 'aRoomTone': {
+      // Soft static-characteristic downward expander + mix.
+      const input = ctx.createGain();
+      const dry = ctx.createGain();
+      const wet = ctx.createGain();
+      const shaper = ctx.createWaveShaper();
+      shaper.oversample = '2x';
+      const out = ctx.createGain();
+      input.connect(dry).connect(out);
+      input.connect(shaper).connect(wet).connect(out);
+      const update = (fr: number) => {
+        const amount = Math.max(0, Math.min(100, n('amount', fr))) / 100;
+        const thr = Math.pow(10, n('threshold', fr) / 20);
+        const knee = 0.002 + (Math.max(0, Math.min(100, n('softness', fr))) / 100) * 0.05;
+        const mix = Math.max(0, Math.min(100, n('mix', fr))) / 100;
+        shaper.curve = expanderCurve(thr, 1 + amount * 2.5, knee);
+        dry.gain.setTargetAtTime(1 - mix, t, 0.01);
+        wet.gain.setTargetAtTime(mix, t, 0.01);
+      };
+      update(0);
+      return { input, output: out, update, nodes: [input, dry, wet, shaper, out] };
+    }
+    case 'aVoiceDenoise': {
+      // Dynamic hiss filter: tame only the high band when it is quiet.
+      const input = ctx.createGain();
+      const dry = ctx.createGain();
+      const hp = ctx.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.Q.value = 0.7;
+      const shaper = ctx.createWaveShaper();
+      shaper.oversample = '2x';
+      const shelf = ctx.createBiquadFilter();
+      shelf.type = 'highshelf';
+      shelf.gain.value = 0;
+      const wet = ctx.createGain();
+      const out = ctx.createGain();
+      input.connect(dry).connect(out);
+      input.connect(hp).connect(shaper).connect(shelf).connect(wet).connect(out);
+      // Also feed the lows through the wet path so Mix=100% still sounds full.
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.Q.value = 0.7;
+      const lpGain = ctx.createGain();
+      input.connect(lp).connect(lpGain).connect(wet);
+      const update = (fr: number) => {
+        const amount = Math.max(0, Math.min(100, n('amount', fr))) / 100;
+        const thr = Math.pow(10, n('threshold', fr) / 20);
+        const freq = Math.max(1500, Math.min(14000, n('hissFreq', fr)));
+        const mix = Math.max(0, Math.min(100, n('mix', fr))) / 100;
+        hp.frequency.setTargetAtTime(freq, t, 0.02);
+        lp.frequency.setTargetAtTime(freq, t, 0.02);
+        shaper.curve = expanderCurve(thr, 1 + amount * 3.5, 0.01);
+        shelf.frequency.setTargetAtTime(freq, t, 0.02);
+        shelf.gain.setTargetAtTime(-amount * 6, t, 0.02);
+        dry.gain.setTargetAtTime(1 - mix, t, 0.01);
+        wet.gain.setTargetAtTime(mix, t, 0.01);
+      };
+      update(0);
+      return { input, output: out, update, nodes: [input, dry, hp, shaper, shelf, wet, lp, lpGain, out] };
     }
     default:
       return passthrough(ctx);

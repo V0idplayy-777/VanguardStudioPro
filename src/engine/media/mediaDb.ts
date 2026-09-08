@@ -117,6 +117,46 @@ export async function kvGet<T>(key: string): Promise<T | undefined> {
   }
 }
 
+export async function kvDel(key: string) {
+  try {
+    await tx(STORE_KV, 'readwrite', (s) => s.delete(key));
+  } catch {
+    /* ignore */
+  }
+}
+
+/* ---------- proxies, cleaned audio, magic-mask mattes ---------- */
+
+const PROXY_PREFIX = 'proxy:';
+const CLEAN_PREFIX = 'clean:';
+
+export async function persistProxyBlob(assetId: string, blob: Blob) {
+  await persistMediaBlob(PROXY_PREFIX + assetId, blob);
+}
+
+export async function loadProxyBlob(assetId: string): Promise<Blob | null> {
+  return loadMediaBlob(PROXY_PREFIX + assetId);
+}
+
+export async function deleteProxyBlob(assetId: string) {
+  await deleteMediaBlob(PROXY_PREFIX + assetId);
+}
+
+export async function persistCleanedAudio(assetId: string, blob: Blob) {
+  await persistMediaBlob(CLEAN_PREFIX + assetId, blob);
+}
+
+export async function loadCleanedAudio(assetId: string): Promise<Blob | null> {
+  return loadMediaBlob(CLEAN_PREFIX + assetId);
+}
+
+export async function deleteCleanedAudio(assetId: string) {
+  await deleteMediaBlob(CLEAN_PREFIX + assetId);
+}
+
+/** Magic-mask track header + keyframes live in kv: `mask:<trackId>`, `mask:<trackId>:<frame>`. */
+export const maskKvKey = (trackId: string, frame?: number) => (frame == null ? `mask:${trackId}` : `mask:${trackId}:${frame}`);
+
 export async function estimateStorage(): Promise<{ usage: number; quota: number } | null> {
   try {
     if (navigator.storage?.estimate) {

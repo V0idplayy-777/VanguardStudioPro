@@ -9,6 +9,7 @@ import { importFiles, MEDIA_ACCEPT } from '../../engine/media/importer';
 import { formatBytes } from '../../engine/util';
 import { cmd } from '../../app/commands';
 import { TEMPLATES } from '../graphics/templates';
+import { useGraphicsLibrary, libraryEntryAsTemplate } from '../graphics/library';
 import { MIME_TEMPLATE, useTimelineView } from '../timeline/timelineState';
 
 /* ---------- Tools (floating tool palette, mirrors the timeline toolbox) ---------- */
@@ -36,7 +37,8 @@ export function LibrariesPanel() {
   const sel = useUI((s) => s.selection.clipIds);
   const [q, setQ] = useState('');
   const filtered = presets.filter((p) => !q || p.name.toLowerCase().includes(q.toLowerCase()));
-  const templates = TEMPLATES.filter((t) => !q || t.name.toLowerCase().includes(q.toLowerCase()));
+  const library = useGraphicsLibrary((s) => s.entries);
+  const templates = [...TEMPLATES, ...library.map(libraryEntryAsTemplate)].filter((t) => !q || t.name.toLowerCase().includes(q.toLowerCase()));
   const exportAll = () => {
     const blob = new Blob([JSON.stringify(presets, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');

@@ -65,6 +65,22 @@ export interface SettingsState {
   /** Park on the last content frame instead of the empty end frame. */
   parkOnLastFrame: boolean;
 
+  /* Proxies */
+  /** Timeline/monitors decode lightweight proxy files when they exist (exports always use originals). */
+  proxyEnabled: boolean;
+  /** Target size of generated proxies. */
+  proxyScale: '720p' | '540p' | '360p';
+  /** Proxy container/codec (browser-supported). */
+  proxyCodec: 'h264' | 'vp9';
+  /** Offer to create a proxy automatically for footage wider than 1920 px. */
+  proxyAutoOffer: boolean;
+
+  /* Speech to text */
+  /** Default Whisper model used by the Transcribe dialog (downloaded once, cached in the browser). */
+  sttModel: 'tiny.en' | 'tiny' | 'base' | 'small';
+  /** Default transcription language ('auto' lets the model detect it). */
+  sttLanguage: string;
+
   /* Performance */
   thumbnailQuality: ThumbQuality;
   showFpsOverlay: boolean;
@@ -110,6 +126,12 @@ export const SETTINGS_META: Record<string, { label: string; category: string; hi
   defaultProgramQuality: { label: 'Program monitor resolution', category: 'Playback' },
   autoQualityDrop: { label: 'Drop quality to keep up', category: 'Playback', hint: 'Falls back to half resolution during playback when rendering falls behind.' },
   parkOnLastFrame: { label: 'End on the last video frame', category: 'Playback', hint: 'When playback reaches the end, show the last frame instead of the empty end frame.' },
+  proxyEnabled: { label: 'Use proxies when available', category: 'Playback', hint: 'Timeline and monitors play lightweight proxy files. Exports always use the originals.' },
+  proxyScale: { label: 'Proxy size', category: 'Playback', hint: 'Target height of generated proxy files.' },
+  proxyCodec: { label: 'Proxy codec', category: 'Playback' },
+  proxyAutoOffer: { label: 'Offer proxies for HD+ footage', category: 'Playback', hint: 'Show a one-click prompt after importing footage wider than 1920 px.' },
+  sttModel: { label: 'Transcription model', category: 'Captions', hint: 'Larger Whisper models are more accurate but slower. Downloaded once and cached.' },
+  sttLanguage: { label: 'Transcription language', category: 'Captions' },
   thumbnailQuality: { label: 'Timeline thumbnails', category: 'Performance' },
   showFpsOverlay: { label: 'Show performance overlay', category: 'Performance', hint: 'Frame rate, render time and dropped frames on the Program Monitor.' },
   decodeCacheSize: { label: 'Decode cache (frames)', category: 'Performance' },
@@ -158,6 +180,14 @@ const DEFAULTS = {
   defaultProgramQuality: 'full' as const,
   autoQualityDrop: true,
   parkOnLastFrame: true,
+
+  proxyEnabled: true,
+  proxyScale: '540p' as const,
+  proxyCodec: 'h264' as const,
+  proxyAutoOffer: true,
+
+  sttModel: 'tiny.en' as const,
+  sttLanguage: 'auto',
 
   thumbnailQuality: 'high' as const,
   showFpsOverlay: false,
