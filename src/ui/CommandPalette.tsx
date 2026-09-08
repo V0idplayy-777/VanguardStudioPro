@@ -124,6 +124,7 @@ function buildItems(): Item[] {
   C('renderQueue', 'Add Sequence to Render Queue', () => cmd.addToRenderQueue(), 'Export', 'Batch-export later from the Export panel');
   C('sceneDetect', 'Scene Detection...', () => ui.openModal({ kind: 'sceneDetect' }), 'Color');
   C('duck', 'Auto Duck Music...', () => ui.openModal({ kind: 'autoDucking' }), 'Audio');
+  C('tutorial', 'Welcome Tutorial (First-time tour)', () => void import('../state/tutorialStore').then((m) => m.useTutorial.getState().start()), 'Help', 'Guided tour: create your first clip', 'F1');
   C('shortcuts', 'Keyboard Shortcuts', () => ui.openModal({ kind: 'keyboardShortcuts' }), 'Help');
   C('settings', 'Open Settings', () => ui.openModal({ kind: 'preferences' }), 'Help', undefined, 'Ctrl+,');
   C('about', 'About Vanguard Studio Pro', () => ui.openModal({ kind: 'about' }), 'Help');

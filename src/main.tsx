@@ -2,6 +2,7 @@ import '@fontsource-variable/inter';
 import './styles/global.css';
 import './styles/controls.css';
 import './styles/app.css';
+import './styles/tutorial.css';
 import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { MenuBar } from './ui/MenuBar';
@@ -22,6 +23,8 @@ import { parseSRT, parseVTT } from './engine/captions/subtitles';
 import { uid } from './engine/util';
 import { useSettings, applyDocumentSettings } from './state/settingsStore';
 import { CommandPalette } from './ui/CommandPalette';
+import { TutorialOverlay, useTutorialShortcuts } from './ui/tutorial/TutorialOverlay';
+import { useTutorial, shouldAutoStartTutorial } from './state/tutorialStore';
 
 function StatusBar() {
   const seq = useActiveSequence();
@@ -187,6 +190,7 @@ function useActiveSequenceSnapshot() {
 function App() {
   useGlobalShortcuts();
   useMaximizeShortcut();
+  useTutorialShortcuts();
   useWindowDrop();
   const hamburger = useUI((s) => s.hamburgerMode);
   const turtle = useUI((s) => s.turtleMode);
@@ -232,16 +236,23 @@ function App() {
     };
   }, [autoSave, interval]);
 
-  // First run: welcome, or offer the autosave if one exists. The timeline itself always starts empty.
+  // First run: tutorial for brand new users, else welcome, plus autosave offer. Timeline itself always starts empty.
   useEffect(() => {
     let cancelled = false;
     autosaveInfo().then((info) => {
       if (cancelled) return;
-      const skip = !useSettings.getState().showWelcomeOnStartup;
       if (info) {
         toast('info', 'Autosave available', `${info.name} from ${new Date(info.at).toLocaleString()}. Open it from File, Open Autosaved Version.`);
         logEvent('info', 'Autosave found', `${info.name} at ${new Date(info.at).toLocaleString()}`);
       }
+      // True first-time: no settings/layout/tour yet -> start interactive tutorial immediately
+      if (shouldAutoStartTutorial()) {
+        window.setTimeout(() => {
+          if (!cancelled) useTutorial.getState().start();
+        }, 700);
+        return;
+      }
+      const skip = !useSettings.getState().showWelcomeOnStartup;
       if (!skip) useUI.getState().openModal({ kind: 'welcome' });
     });
     return () => {
@@ -277,6 +288,7 @@ function App() {
       <ContextMenuHost />
       <ToastHost />
       <CommandPalette />
+      <TutorialOverlay />
       <EggOverlay />
     </div>
   );

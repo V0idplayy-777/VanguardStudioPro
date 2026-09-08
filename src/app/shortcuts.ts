@@ -130,6 +130,7 @@ export const SHORTCUTS: ShortcutDef[] = [
   } },
   { id: 'magicMask', keys: `${mod}+Alt+M`, label: 'Magic Mask (AI rotoscope)...', category: 'Effects', run: () => useUI.getState().openModal({ kind: 'magicMask' }) },
   { id: 'voiceCleanup', keys: `${mod}+Alt+A`, label: 'Clean up voice...', category: 'Audio', run: () => useUI.getState().openModal({ kind: 'voiceCleanup' }) },
+  { id: 'tutorial', keys: 'F1', label: 'Welcome tutorial', category: 'Help', run: () => void import('../state/tutorialStore').then((m) => m.useTutorial.getState().start()) },
 ];
 
 function seqHasLinked() {

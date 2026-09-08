@@ -1589,6 +1589,14 @@ export const cmd = {
     }
   },
 
+  /* ---------- tutorial ---------- */
+  startTutorial() {
+    void import('../state/tutorialStore').then((m) => m.useTutorial.getState().start());
+  },
+  resetTutorial() {
+    void import('../state/tutorialStore').then((m) => m.useTutorial.getState().reset());
+  },
+
   /* ---------- render queue ---------- */
   /** Queue the active sequence with the app export defaults applied. */
   addToRenderQueue() {
