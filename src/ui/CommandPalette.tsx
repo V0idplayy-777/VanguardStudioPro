@@ -114,8 +114,14 @@ function buildItems(): Item[] {
   C('removeSilence', 'Remove Silence...', () => ui.openModal({ kind: 'removeSilence' }), 'Audio', 'Cut silent spans out of a talking clip and ripple the gaps closed');
   C('normalizeAudio', 'Normalize Audio Levels', () => void cmd.normalizeAudio(), 'Audio', 'Measure loudness and set clip gain to hit -14 LUFS');
   C('autoColor', 'Auto Color Selection', () => void cmd.autoColorSelection(), 'Color', 'One-click contrast and white balance fix');
+  C('greenScreen', 'Green Screen Key (Chroma)...', () => ui.openModal({ kind: 'greenScreen' }), 'Color', 'Sample the screen color from the frame, preview the matte, apply Ultra Key');
   C('kenBurns', 'Pan & Zoom (Ken Burns)...', () => ui.openModal({ kind: 'kenBurns' }), 'Editing', 'Animated zoom / pan across clips and photos');
   C('autoReframe', 'Auto Reframe...', () => ui.openModal({ kind: 'autoReframe' }), 'Editing', 'Reframe the sequence to 9:16 / 1:1 / 4:5 tracking the action');
+  C('stabilize', 'Stabilize Clip (Warp Stabilizer)...', () => ui.openModal({ kind: 'stabilize' }), 'Editing', 'Analyze camera shake and smooth it with counteracting keyframes');
+  C('splitScreen', 'Split Screen / Picture-in-Picture...', () => ui.openModal({ kind: 'splitScreen' }), 'Editing', 'Arrange 2-4 selected clips into a layout, each on its own track');
+  C('autoMontage', 'Auto Montage (Cut to Music)...', () => ui.openModal({ kind: 'autoMontage' }), 'Editing', 'Build a new beat-synced montage sequence from your media');
+  C('syncAudio', 'Sync Clips by Audio...', () => ui.openModal({ kind: 'syncAudio' }), 'Audio', 'Align double-system recordings by cross-correlating their waveforms');
+  C('renderQueue', 'Add Sequence to Render Queue', () => cmd.addToRenderQueue(), 'Export', 'Batch-export later from the Export panel');
   C('sceneDetect', 'Scene Detection...', () => ui.openModal({ kind: 'sceneDetect' }), 'Color');
   C('duck', 'Auto Duck Music...', () => ui.openModal({ kind: 'autoDucking' }), 'Audio');
   C('shortcuts', 'Keyboard Shortcuts', () => ui.openModal({ kind: 'keyboardShortcuts' }), 'Help');
@@ -175,7 +181,7 @@ function buildItems(): Item[] {
 
   /* Settings toggles */
   const st = useSettings.getState();
-  const boolKeys = ['reduceMotion', 'highContrast', 'largerText', 'strongFocus', 'disableFlashingEffects', 'verboseToasts', 'autoQualityDrop', 'parkOnLastFrame', 'showFpsOverlay', 'floatPipeline', 'snapshotPresentation', 'desyncCanvas', 'debugRenderLogging', 'brightSurfaces'] as const;
+  const boolKeys = ['reduceMotion', 'highContrast', 'largerText', 'strongFocus', 'disableFlashingEffects', 'verboseToasts', 'autoQualityDrop', 'parkOnLastFrame', 'showFpsOverlay', 'floatPipeline', 'snapshotPresentation', 'desyncCanvas', 'debugRenderLogging', 'brightSurfaces', 'importAutoSequence', 'exportAutoDownload', 'exportBurnCaptions', 'showWelcomeOnStartup', 'soundOnExport'] as const;
   for (const k of boolKeys) {
     const meta = SETTINGS_META[k];
     items.push({

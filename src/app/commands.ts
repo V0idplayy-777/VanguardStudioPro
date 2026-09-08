@@ -3,7 +3,7 @@ import { useUI, toast, logEvent } from '../state/uiStore';
 import { usePlayback } from '../engine/playback/playback';
 import * as E from '../engine/timeline/edits';
 import type { Clip, Id, MediaAsset, Sequence, Marker, GeneratorKind, Transition, Param } from '../types/project';
-import { uid, download, stripExt } from '../engine/util';
+import { uid, download, stripExt, formatDurationShort, rgbToHex } from '../engine/util';
 import { importFiles, pickFiles, MEDIA_ACCEPT } from '../engine/media/importer';
 import { getMedia } from '../engine/media/mediaStore';
 import { downloadProject, openProjectFile, autosaveNow } from '../engine/project/serialize';
@@ -503,6 +503,8 @@ export const cmd = {
   },
   createSequence(name: string, settings: Partial<Sequence['settings']>, tracks: { video: number; audio: number }) {
     const s = createSequence(name, settings, tracks);
+    // Settings > Captions: new sequences start with the project's caption defaults.
+    s.captionTrack.style = { ...useProject.getState().project.settings.captionDefaults };
     useProject.getState().update('New sequence', (p) => {
       p.sequences.push(s);
       p.openSequenceIds.push(s.id);
@@ -1249,6 +1251,282 @@ export const cmd = {
     usePlayback.setState({ playhead: 0 });
     toast('success', 'Auto Reframe', `"${seq.name}" copied at ${outW}x${outH} (${target}). Clips track the action; nudge position keyframes to taste.`);
   },
+
+  /* ---------- warp stabilizer ---------- */
+  /**
+   * Apply a stabilization analysis to a clip: counteracting position keyframes
+   * plus a crop zoom that hides the edges. One undo step.
+   */
+  async applyStabilization(clipId: Id, analysis: import('../engine/stabilize/stabilizer').StabilizeAnalysis, opts: { lock?: boolean; smoothSec?: number; zoomLimit?: number }) {
+    const seq = seqNow();
+    if (!seq) return;
+    const { planStabilization } = await import('../engine/stabilize/stabilizer');
+    const plan = planStabilization(analysis, { lock: opts.lock, smoothSec: opts.smoothSec, zoomLimit: opts.zoomLimit });
+    const fps = seq.settings.fps;
+    let appliedZoom = 1;
+    let maxCorr = 0;
+    useProject.getState().update('Stabilize clip', (p) => {
+      const s = p.sequences.find((x) => x.id === seq.id);
+      const c = s?.clips.find((x) => x.id === clipId);
+      if (!s || !c) return;
+      const dur = Math.max(1, c.duration - 1);
+      const base = c.motion.position.value;
+      const kfs: { t: number; v: [number, number]; interp: 'linear' }[] = [];
+      let lastT = -1;
+      for (const corr of plan.corrections) {
+        const t = Math.max(0, Math.min(dur, Math.round(corr.t * fps)));
+        if (t === lastT) continue;
+        lastT = t;
+        kfs.push({ t, v: [Math.round((base[0] + corr.dx) * 10000) / 10000, Math.round((base[1] + corr.dy) * 10000) / 10000], interp: 'linear' });
+      }
+      if (kfs.length < 2) return;
+      if (kfs[kfs.length - 1].t < dur) kfs.push({ t: dur, v: kfs[kfs.length - 1].v, interp: 'linear' });
+      c.motion.position = { value: kfs[0].v, animated: true, keyframes: kfs };
+      appliedZoom = plan.zoom;
+      maxCorr = plan.maxCorrection;
+      if (plan.zoom > 1.001) {
+        const baseScale = c.motion.scale.value;
+        c.motion.scale = { value: Math.round(baseScale * plan.zoom * 10) / 10, animated: false, keyframes: undefined };
+      }
+    });
+    const pct = Math.round(maxCorr * 100);
+    toast('success', 'Clip stabilized', `${opts.lock ? 'Locked-off tripod look' : `Smoothed over ${opts.smoothSec ?? 0.5}s`}: up to ${pct}% correction, cropped to ${Math.round(appliedZoom * 100)}%. Undo with Ctrl+Z.`);
+    logEvent('info', `Stabilized clip`, `${plan.corrections.length} corrections, zoom ${appliedZoom.toFixed(3)}`);
+  },
+
+  /* ---------- sync by audio ---------- */
+  /**
+   * Move target clips (and anything linked to them) so their audio lines up
+   * with the reference clip. targets carry frame deltas computed from the
+   * waveform cross-correlation; trimHead trims the clip's start when the move
+   * would push it before frame 0. One undo step.
+   */
+  syncByAudio(refId: Id, targets: { clipId: Id; deltaFrames: number }[]) {
+    const seq = seqNow();
+    if (!seq) return toast('warning', 'No sequence', 'Open a sequence and try again.');
+    if (!targets.length) return toast('info', 'Sync by Audio', 'No targets selected.');
+    const fps = seq.settings.fps;
+    let moved = 0;
+    let trimmed = 0;
+    useProject.getState().update('Sync by audio', (p) => {
+      const s = p.sequences.find((x) => x.id === seq.id);
+      if (!s) return;
+      for (const t of targets) {
+        const clip = s.clips.find((c) => c.id === t.clipId);
+        if (!clip) continue;
+        // Linked parts (video+audio from one source) travel together.
+        const group = clip.linkId ? s.clips.filter((c) => c.linkId === clip.linkId) : [clip];
+        const ids = group.map((c) => c.id);
+        const delta = t.deltaFrames;
+        const minStart = Math.min(...group.map((c) => c.start));
+        if (minStart + delta < 0) {
+          // Not enough room: shift the whole group, then trim whatever would
+          // hang off the timeline start (trimClipStart advances the in-point
+          // and shortens the head, keeping the tail pinned).
+          for (const c of group) {
+            E.clearRange(s, c.trackId, Math.max(0, c.start + delta), c.start + delta + c.duration, new Set(ids));
+          }
+          for (const c of group) {
+            c.start += delta;
+            // Keyframes are clip-local: a pure move keeps them; the trim
+            // below shifts them itself when the head gets cut.
+            if (c.start < 0) E.trimClipStart(c, 0, fps);
+          }
+          trimmed++;
+        } else {
+          E.moveClips(s, ids, delta, null);
+        }
+        moved++;
+      }
+    });
+    if (moved) toast('success', 'Synced by audio', `${moved} clip${moved === 1 ? '' : 's'} aligned${trimmed ? ` (${trimmed} trimmed at the timeline start)` : ''}. Undo with Ctrl+Z.`);
+    else toast('warning', 'Sync by Audio', 'Nothing was moved.');
+  },
+
+  /* ---------- split screen / picture-in-picture ---------- */
+  /**
+   * Arrange 2-4 selected video clips into a layout: each clip gets its own
+   * video track, they all start at the same frame, and scale/position are
+   * written for the cell. One undo step.
+   */
+  splitScreen(layout: 'sideBySide' | 'stacked' | 'grid' | 'pip', gapPct = 2, mode: 'fit' | 'fill' = 'fit') {
+    const seq = seqNow();
+    if (!seq) return toast('warning', 'No sequence', 'Open a sequence and try again.');
+    let clips = selectedClips().filter((c) => seq.tracks.find((t) => t.id === c.trackId)?.kind === 'video');
+    if (clips.length < 2) return toast('info', 'Split Screen', 'Select 2 to 4 video clips on the timeline first.');
+    clips = clips.sort((a, b) => a.start - b.start).slice(0, 4);
+    const n = clips.length;
+    const cells = splitScreenCells(layout, n, gapPct);
+
+    const startFrame = Math.min(...clips.map((c) => c.start));
+    const seqW = seq.settings.width;
+    const seqH = seq.settings.height;
+    const ids = clips.map((c) => c.id);
+    useProject.getState().update('Split screen', (p) => {
+      const s = p.sequences.find((x) => x.id === seq.id);
+      if (!s) return;
+      // Every clip needs its own (unlocked) video track; add tracks if short.
+      let vTracks = s.tracks.filter((t) => t.kind === 'video' && !t.locked);
+      while (vTracks.length < n) {
+        E.addTrack(s, 'video');
+        vTracks = s.tracks.filter((t) => t.kind === 'video' && !t.locked);
+      }
+      clips.forEach((clip, i) => {
+        const c = s.clips.find((x) => x.id === clip.id);
+        if (!c) return;
+        // PIP keeps the main clip on the bottom track; small ones stack above.
+        const track = layout === 'pip' ? vTracks[Math.min(i, vTracks.length - 1)] : vTracks[i];
+        const delta = startFrame - c.start;
+        const group = c.linkId ? s.clips.filter((x) => x.linkId === c.linkId) : [c];
+        const groupIds = group.map((x) => x.id);
+        const trackShift = new Map<Id, Id>([[c.id, track.id]]);
+        if (delta !== 0 || c.trackId !== track.id) E.moveClips(s, groupIds, delta, trackShift);
+        // Scale + position for the cell.
+        const asset = p.assets.find((a) => a.id === c.assetId);
+        const aw = asset?.width ?? seqW;
+        const ah = asset?.height ?? seqH;
+        const cell = cells[i];
+        const cellW = cell.w * seqW;
+        const cellH = cell.h * seqH;
+        const f = mode === 'fit' ? Math.min : Math.max;
+        const scalePct = f(cellW / aw, cellH / ah) * 100;
+        c.motion.scale = { value: Math.round(scalePct * 10) / 10, animated: false, keyframes: undefined };
+        c.motion.position = { value: [Math.round((cell.x + cell.w / 2) * 1000) / 1000, Math.round((cell.y + cell.h / 2) * 1000) / 1000], animated: false, keyframes: undefined };
+      });
+    });
+    useUI.getState().selectClips(ids);
+    const names: Record<typeof layout, string> = { sideBySide: 'side by side', stacked: 'stacked', grid: '2x2 grid', pip: 'picture-in-picture' };
+    toast('success', 'Split screen applied', `${n} clips arranged ${names[layout]}. Undo with Ctrl+Z.`);
+  },
+
+  /* ---------- auto montage ---------- */
+  /**
+   * Build a new beat-synced montage sequence: music on A1, visuals cut to the
+   * beat grid with cover scaling and optional Ken Burns moves.
+   */
+  async autoMontage(opts: { musicAssetId: Id; visualAssetIds: Id[]; aspect: string; density: number; motion: boolean; maxSeconds: number; fps: number }, onProgress?: (label: string) => void) {
+    const musicRec = getMedia(opts.musicAssetId);
+    const musicAsset = findAsset(useProject.getState().project, opts.musicAssetId);
+    if (!musicRec || !musicAsset) return toast('warning', 'Auto Montage', 'Music asset not found.');
+    onProgress?.('Waiting for audio decode...');
+    await musicRec.ready;
+    const buffer = musicRec.audio;
+    if (!buffer) return toast('warning', 'Auto Montage', `"${musicAsset.name}" has no decoded audio.`);
+    const visuals = opts.visualAssetIds.map((id) => findAsset(useProject.getState().project, id)).filter((a): a is MediaAsset => !!a && (a.kind === 'video' || a.kind === 'image'));
+    if (!visuals.length) return toast('warning', 'Auto Montage', 'Pick at least one photo or video for the visuals.');
+    onProgress?.('Waiting for media...');
+    for (const v of visuals) {
+      const rec = getMedia(v.id);
+      if (rec) await rec.ready;
+    }
+    onProgress?.('Detecting beats...');
+    const { detectBeats } = await import('../engine/audio/beats');
+    const { planMontageSlots, MONTAGE_ASPECTS, seededUnit } = await import('../engine/montage/montage');
+    const beats = detectBeats(buffer, { sensitivity: 0.5 });
+    const slots = planMontageSlots(beats.beats, buffer.duration, { density: opts.density, maxSeconds: Math.max(2, opts.maxSeconds) });
+    if (slots.length < 2) return toast('info', 'Auto Montage', 'Not enough beats found - try a track with a clearer rhythm or lower the density.');
+    const asp = MONTAGE_ASPECTS[opts.aspect] ?? MONTAGE_ASPECTS['16:9'];
+    const fps = opts.fps || 30;
+    onProgress?.(`Building ${slots.length} cuts...`);
+    const totalFrames = Math.round(slots[slots.length - 1].end * fps);
+    const seqName = `Montage - ${stripExt(musicAsset.name)}`;
+    const s = createSequence(seqName, { width: asp.w, height: asp.h, fps }, { video: 1, audio: 1 });
+    s.captionTrack.style = { ...useProject.getState().project.settings.captionDefaults };
+    const vTrackId = s.tracks.find((t) => t.kind === 'video')!.id;
+    const aTrackId = s.tracks.find((t) => t.kind === 'audio')!.id;
+    // Music bed.
+    s.clips.push(makeClip({ trackId: aTrackId, start: 0, duration: totalFrames, assetId: musicAsset.id, name: musicAsset.name, inPoint: 0, label: 'forest' }));
+    // Visuals cut to the grid.
+    visuals.sort((a, b) => a.name.localeCompare(b.name));
+    slots.forEach((slot, i) => {
+      const asset = visuals[i % visuals.length];
+      const start = Math.round(slot.start * fps);
+      const duration = Math.max(1, Math.round(slot.end * fps) - start);
+      const spanSec = duration / fps;
+      const aw = asset.width ?? asp.w;
+      const ah = asset.height ?? asp.h;
+      const coverPct = Math.max((asp.w / aw) * 100, (asp.h / ah) * 100);
+      let inPoint = 0;
+      if (asset.kind === 'video' && asset.duration) {
+        const maxIn = Math.max(0, asset.duration - spanSec - 0.1);
+        inPoint = Math.round(seededUnit(asset.id + ':' + i) * maxIn * 100) / 100;
+      }
+      const clip = makeClip({ trackId: vTrackId, start, duration, assetId: asset.id, name: asset.name, inPoint, label: asset.label });
+      const r = seededUnit(asset.id + ':kb' + i);
+      if (opts.motion && duration > 4) {
+        const zoomTo = 1 + 0.04 + r * 0.05;
+        const from = r < 0.5 ? 1 : zoomTo;
+        const to = r < 0.5 ? zoomTo : 1;
+        clip.motion.scale = {
+          value: Math.round(coverPct * from * 10) / 10,
+          animated: true,
+          keyframes: [
+            { t: 0, v: Math.round(coverPct * from * 10) / 10, interp: 'linear' },
+            { t: duration - 1, v: Math.round(coverPct * to * 10) / 10, interp: 'easeInOut' },
+          ],
+        };
+      } else {
+        clip.motion.scale = param(Math.round(coverPct * 10) / 10);
+      }
+      s.clips.push(clip);
+    });
+    // Beat markers so snapping and Cut to Beats keep working on the montage.
+    beats.beats.forEach((t, i) => {
+      const frame = Math.round(t * fps);
+      if (frame <= 0 || frame >= totalFrames) return;
+      s.markers.push({ id: uid('mrk'), time: frame, duration: 0, name: `Beat ${i + 1}`, comment: beats.bpm ? `~${beats.bpm} BPM` : '', color: 'green', kind: 'beat' });
+    });
+    useProject.getState().update('Auto montage', (p) => {
+      p.sequences.push(s);
+      p.openSequenceIds.push(s.id);
+      p.activeSequenceId = s.id;
+      p.assets.push({ id: uid('ast'), kind: 'sequence', name: seqName, binId: useUI.getState().currentBinId, label: 'iris', sequenceId: s.id, hasVideo: true, hasAudio: true, width: asp.w, height: asp.h, fps, duration: totalFrames / fps, offline: false, createdAt: Date.now(), meta: {} });
+    });
+    usePlayback.setState({ playhead: 0 });
+    useUI.getState().clearSelection();
+    onProgress?.('Done');
+    toast('success', 'Auto Montage ready', `${slots.length} cuts on the beat${beats.bpm ? ` (~${beats.bpm} BPM)` : ''}, ${visuals.length} source${visuals.length === 1 ? '' : 's'}, ${formatDurationShort(totalFrames / fps)} long.`);
+    logEvent('info', 'Auto montage built', `${seqName}: ${slots.length} slots at ${asp.w}x${asp.h}${opts.motion ? ', with motion' : ''}`);
+  },
+
+  /* ---------- green screen / chroma key ---------- */
+  /**
+   * Apply (or update) Ultra Key on a clip with the color and matte settings
+   * picked in the Green Screen dialog. One undo step.
+   */
+  applyGreenScreenKey(clipId: Id, opts: { color: [number, number, number]; tolerance: number; softness: number; spill: number }) {
+    const seq = seqNow();
+    if (!seq) return toast('warning', 'No sequence', 'Open a sequence and try again.');
+    let applied = false;
+    useProject.getState().update('Green screen key', (p) => {
+      const s = p.sequences.find((x) => x.id === seq.id);
+      const c = s?.clips.find((x) => x.id === clipId);
+      if (!s || !c) return;
+      let fx = c.effects.find((e) => e.type === 'ultraKey');
+      if (!fx) {
+        const def = getEffectDef('ultraKey');
+        if (!def) return;
+        fx = { id: uid('fx'), type: 'ultraKey', enabled: true, params: defaultEffectParams(def), masks: [] };
+        c.effects.push(fx);
+      }
+      fx.params.keyColor = param([opts.color[0], opts.color[1], opts.color[2], 1] as [number, number, number, number]);
+      fx.params.tolerance = param(Math.round(opts.tolerance * 2) / 2);
+      fx.params.softness = param(Math.round(opts.softness * 2) / 2);
+      fx.params.spill = param(Math.round(opts.spill * 2) / 2);
+      applied = true;
+    });
+    if (applied) {
+      const hex = rgbToHex(opts.color[0], opts.color[1], opts.color[2]);
+      toast('success', 'Chroma key applied', `Ultra Key is on the clip (${hex}). Fine-tune the matte in Effect Controls.`);
+      logEvent('info', 'Green screen key applied', `${hex}, tolerance ${opts.tolerance}`);
+    }
+  },
+
+  /* ---------- render queue ---------- */
+  /** Queue the active sequence with the app export defaults applied. */
+  addToRenderQueue() {
+    void import('../engine/export/queue').then((m) => m.useRenderQueue.getState().addActiveSequence());
+  },
 };
 
 /** The clip Remove Silence / Normalize Audio operate on: first selected clip with audio, else the first one. */
@@ -1256,6 +1534,41 @@ export function pickAudioClip(seq: Sequence): Clip | null {
   const sel = selectedClips();
   const withAudio = (c: Clip) => !!getMedia(c.assetId)?.audio;
   return sel.find(withAudio) ?? seq.clips.find(withAudio) ?? null;
+}
+
+/**
+ * Cell rects (normalized 0..1 frame coordinates, y down) for the Split Screen
+ * layouts. Shared by the command and the modal's live preview.
+ */
+export function splitScreenCells(layout: 'sideBySide' | 'stacked' | 'grid' | 'pip', n: number, gapPct: number): { x: number; y: number; w: number; h: number }[] {
+  const g = Math.max(0, Math.min(10, gapPct)) / 100;
+  const cells: { x: number; y: number; w: number; h: number }[] = [];
+  if (layout === 'sideBySide') {
+    const cw = (1 - g * (n + 1)) / n;
+    for (let i = 0; i < n; i++) cells.push({ x: g + i * (cw + g), y: g, w: cw, h: 1 - 2 * g });
+  } else if (layout === 'stacked') {
+    const ch = (1 - g * (n + 1)) / n;
+    for (let i = 0; i < n; i++) cells.push({ x: g, y: g + i * (ch + g), w: 1 - 2 * g, h: ch });
+  } else if (layout === 'grid') {
+    const cw = (1 - 3 * g) / 2;
+    const ch = (1 - 3 * g) / 2;
+    for (let i = 0; i < n; i++) {
+      const col = i % 2;
+      const row = Math.floor(i / 2);
+      cells.push({ x: g + col * (cw + g), y: g + row * (ch + g), w: cw, h: ch });
+    }
+  } else {
+    // pip: first clip full frame, the rest in the corners (drawn on top).
+    cells.push({ x: 0, y: 0, w: 1, h: 1 });
+    const s = 0.3;
+    const corners = [
+      { x: 1 - s - g, y: g },
+      { x: g, y: g },
+      { x: 1 - s - g, y: 1 - s - g },
+    ];
+    for (let i = 1; i < n; i++) cells.push({ x: corners[i - 1].x, y: corners[i - 1].y, w: s, h: s });
+  }
+  return cells;
 }
 
 let clipboard: E.ClipboardPayload | null = null;

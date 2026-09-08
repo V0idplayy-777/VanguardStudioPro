@@ -3,8 +3,9 @@ import { uid, ext, stripExt } from '../util';
 import { computePeaks, registerMedia, updateMedia, getMedia } from './mediaStore';
 import { createElementSource, createWebCodecsSource, decodeAudioBuffer, probeMedia, probeWithElement } from './decoder';
 import { getSharedAudioContext } from '../audio/audioContext';
-import { useProject } from '../../state/projectStore';
+import { useProject, createSequence } from '../../state/projectStore';
 import { logEvent, toast, useUI } from '../../state/uiStore';
+import { settings } from '../../state/settingsStore';
 import { persistMediaBlob } from './mediaDb';
 
 const VIDEO_EXT = new Set(['mp4', 'm4v', 'mov', 'webm', 'mkv', 'avi', 'mts', 'm2ts', 'ts', 'mxf', 'ogv', '3gp']);
@@ -74,6 +75,29 @@ function patchAsset(id: string, patch: Partial<MediaAsset>) {
   });
 }
 
+/**
+ * Settings > Import: when the project has no sequence at all, the first
+ * decoded video/image creates one matching its size and rate.
+ */
+function maybeAutoSequence(asset: MediaAsset, patch: Partial<MediaAsset>) {
+  if (!settings().importAutoSequence) return;
+  if (asset.kind !== 'video' && asset.kind !== 'image') return;
+  const w = patch.width ?? asset.width;
+  const h = patch.height ?? asset.height;
+  if (!w || !h) return;
+  if (useProject.getState().project.sequences.length) return;
+  const fps = patch.fps && isFinite(patch.fps) ? Math.round(patch.fps * 1000) / 1000 : 30;
+  const seq = createSequence('Sequence 01', { width: w, height: h, fps }, { video: 2, audio: 2 });
+  useProject.getState().update('New sequence from import', (p) => {
+    if (p.sequences.length) return; // another import won the race
+    p.sequences.push(seq);
+    p.openSequenceIds.push(seq.id);
+    p.activeSequenceId = seq.id;
+    p.assets.push({ id: uid('ast'), kind: 'sequence', name: seq.name, binId: null, label: 'iris', sequenceId: seq.id, hasVideo: true, hasAudio: true, width: w, height: h, fps, duration: 0, offline: false, createdAt: Date.now(), meta: {} });
+  });
+  logEvent('info', 'Sequence created from import', `${w}x${h} @ ${fps} fps to match "${asset.name}"`);
+}
+
 export async function decodeAsset(asset: MediaAsset, blob: Blob) {
   const rec = getMedia(asset.id);
   if (!rec) return;
@@ -115,6 +139,7 @@ export async function decodeAsset(asset: MediaAsset, blob: Blob) {
     if (probe.hasVideo && !probe.hasAudio && asset.kind === 'video') patch.hasAudio = false;
     if (!probe.hasVideo && asset.kind === 'video') patch.kind = 'audio';
     patchAsset(asset.id, patch);
+    maybeAutoSequence(asset, patch);
 
     // Video source
     if (probe.hasVideo) {

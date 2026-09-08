@@ -88,6 +88,54 @@ export interface ExportProgress {
   bytes?: number;
 }
 
+/* ---------- presets & app defaults ---------- */
+
+export type ExportPreset = { id: string; name: string; apply: (s: ExportSettings, seq: Sequence) => Partial<ExportSettings> };
+
+/** Preset list shared by the Export panel and the Settings > Export category. */
+export const EXPORT_PRESETS: ExportPreset[] = [
+  { id: 'match', name: 'Match Source - High bitrate', apply: (_s, seq) => ({ container: 'mp4', videoCodec: 'avc', audioCodec: 'aac', width: seq.settings.width, height: seq.settings.height, fps: seq.settings.fps, quality: 'high', videoBitrate: Math.round((seq.settings.width * seq.settings.height * seq.settings.fps * 0.12) / 1000) }) },
+  { id: 'yt1080', name: 'YouTube 1080p', apply: () => ({ container: 'mp4', videoCodec: 'avc', audioCodec: 'aac', width: 1920, height: 1080, quality: 'high', videoBitrate: 12000, audioBitrate: 320, keyframeInterval: 2 }) },
+  { id: 'yt4k', name: 'YouTube 2160p (4K)', apply: () => ({ container: 'mp4', videoCodec: 'avc', audioCodec: 'aac', width: 3840, height: 2160, quality: 'veryHigh', videoBitrate: 45000, audioBitrate: 320 }) },
+  { id: 'vertical', name: 'Vertical 1080x1920 (Shorts / Reels)', apply: () => ({ container: 'mp4', videoCodec: 'avc', audioCodec: 'aac', width: 1080, height: 1920, quality: 'high', videoBitrate: 10000, scaleMode: 'fill' }) },
+  { id: 'square', name: 'Square 1080x1080', apply: () => ({ container: 'mp4', videoCodec: 'avc', audioCodec: 'aac', width: 1080, height: 1080, quality: 'high', videoBitrate: 8000, scaleMode: 'fill' }) },
+  { id: 'webm', name: 'WebM VP9 (web)', apply: () => ({ container: 'webm', videoCodec: 'vp9', audioCodec: 'opus', quality: 'high' }) },
+  { id: 'proxy', name: 'Proxy 720p low bitrate', apply: () => ({ container: 'mp4', videoCodec: 'avc', audioCodec: 'aac', width: 1280, height: 720, quality: 'low', videoBitrate: 2500, audioBitrate: 128 }) },
+  { id: 'gif', name: 'Animated GIF (max 720 px)', apply: () => ({ container: 'gif', width: 720, height: 405, fps: 15, includeAudio: false }) },
+  { id: 'wav', name: 'Audio only - WAV 48 kHz', apply: () => ({ container: 'wav', includeVideo: false, includeAudio: true }) },
+  { id: 'png', name: 'PNG image sequence', apply: () => ({ container: 'png', includeAudio: false }) },
+];
+
+export type ExportFilenameMode = 'sequence' | 'project' | 'dated';
+
+export function exportFilenameFor(mode: ExportFilenameMode, seqName: string, projectName: string): string {
+  switch (mode) {
+    case 'project':
+      return sanitizeFilename(`${projectName} - ${seqName}`);
+    case 'dated':
+      return sanitizeFilename(`${seqName} ${new Date().toISOString().slice(0, 10)}`);
+    default:
+      return sanitizeFilename(seqName);
+  }
+}
+
+/**
+ * Apply the app-level export preferences (Settings > Export) on top of the
+ * per-sequence defaults. Used by the Export panel and the render queue.
+ */
+export function applyAppExportDefaults(
+  base: ExportSettings,
+  seq: Sequence,
+  prefs: { exportDefaultPreset: string; exportFilenameMode: ExportFilenameMode; exportBurnCaptions: boolean; projectName: string },
+): ExportSettings {
+  let out = { ...base };
+  const preset = EXPORT_PRESETS.find((p) => p.id === prefs.exportDefaultPreset);
+  if (preset) out = { ...out, ...preset.apply(out, seq) };
+  out.filename = exportFilenameFor(prefs.exportFilenameMode, seq.name, prefs.projectName);
+  out.burnCaptions = prefs.exportBurnCaptions && seq.captions.length > 0;
+  return out;
+}
+
 export interface ExportResult {
   blob: Blob;
   filename: string;

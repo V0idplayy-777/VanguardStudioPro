@@ -1,14 +1,15 @@
 {
   "name": "vanguard-studio-pro",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Vanguard Studio Pro - a professional non-linear video editor that runs in the browser.",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 5173",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 0.0.0.0 --port 4173",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:maths": "esbuild tests/engine-maths.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/engine-maths.mjs && node node_modules/.cache/engine-maths.mjs"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.2.5",

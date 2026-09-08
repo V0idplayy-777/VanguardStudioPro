@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { Id } from '../types/project';
 import type { TimecodeMode } from '../engine/timecode';
+import { settings } from './settingsStore';
 
 export type ToolId = 'select' | 'trackSelectFwd' | 'trackSelectBack' | 'ripple' | 'rolling' | 'rateStretch' | 'razor' | 'slip' | 'slide' | 'pen' | 'hand' | 'zoom' | 'remap';
 
@@ -97,7 +98,12 @@ export interface ModalRequest {
     | 'beatDetect'
     | 'removeSilence'
     | 'kenBurns'
-    | 'autoReframe';
+    | 'autoReframe'
+    | 'stabilize'
+    | 'syncAudio'
+    | 'splitScreen'
+    | 'autoMontage'
+    | 'greenScreen';
   payload?: any;
 }
 
@@ -321,7 +327,9 @@ export const useUI = create<UIState>((set, get) => ({
     const id = `t${++toastCounter}`;
     set({ toasts: [...get().toasts, { ...t, id, at: Date.now() }].slice(-6) });
     if (!t.sticky) {
-      window.setTimeout(() => get().dismissToast(id), t.kind === 'error' ? 9000 : 4500);
+      // Duration follows Settings > Notifications (errors stay a bit longer).
+      const secs = Math.max(1.5, Math.min(15, settings().toastDuration || 4.5));
+      window.setTimeout(() => get().dismissToast(id), t.kind === 'error' ? Math.round(secs * 2000) : Math.round(secs * 1000));
     }
     return id;
   },
