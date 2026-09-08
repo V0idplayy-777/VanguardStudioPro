@@ -127,6 +127,12 @@ function buildItems(): Item[] {
   C('shortcuts', 'Keyboard Shortcuts', () => ui.openModal({ kind: 'keyboardShortcuts' }), 'Help');
   C('settings', 'Open Settings', () => ui.openModal({ kind: 'preferences' }), 'Help', undefined, 'Ctrl+,');
   C('about', 'About Vanguard Studio Pro', () => ui.openModal({ kind: 'about' }), 'Help');
+  C('toggleProxy', 'Toggle Proxy Playback', () => void cmd.toggleProxyPlayback(), 'Playback', 'Play lightweight proxies when they exist (exports always use originals)');
+  C('proxyManager', 'Proxy Manager...', () => ui.openModal({ kind: 'proxyManager' }), 'Playback', 'Create, attach and delete proxy files');
+  C('transcribe', 'Transcribe Sequence (Speech to Text)...', () => ui.openModal({ kind: 'transcribe' }), 'Captions', 'Real on-device Whisper transcription into captions');
+  C('magicMask', 'Magic Mask (AI Rotoscope)...', () => ui.openModal({ kind: 'magicMask' }), 'Effects', 'Track a person matte with no green screen');
+  C('voiceCleanup', 'Clean Up Voice...', () => ui.openModal({ kind: 'voiceCleanup' }), 'Audio', 'Denoise, de-hum and level dialogue, baked per asset');
+  C('saveTemplate', 'Save Selected Graphic as Template', () => cmd.saveGraphicAsTemplate(), 'Graphics', 'Snapshot a graphic clip into your motion graphics library');
 
   /* Panels */
   for (const [pid, title] of Object.entries(PANEL_TITLES)) {

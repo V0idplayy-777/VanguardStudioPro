@@ -87,6 +87,7 @@ export function CaptionsPanel() {
             <Button sm icon="add" onClick={addAtPlayhead}>Add at playhead</Button>
             <Button sm onClick={splitCurrent} disabled={!current}>Split</Button>
             <Button sm onClick={() => void cmd.importCaptions()}>Import SRT/VTT</Button>
+            <Button sm icon="waveform" onClick={() => useUI.getState().openModal({ kind: 'transcribe' })} title="Transcribe sequence audio into captions with on-device speech recognition">Transcribe audio…</Button>
             <span className="spacer" />
             <Checkbox checked={seq.captionTrack.enabled} onChange={(v) => write('Caption track', (s) => { s.captionTrack.enabled = v; })} label="Show" title="Show captions in the Program Monitor and export" />
             <Checkbox checked={seq.captionTrack.burnIn} onChange={(v) => write('Caption burn-in', (s) => { s.captionTrack.burnIn = v; })} label="Burn in" title="Burn captions into exported video" />
@@ -441,6 +442,12 @@ const LESSONS: { title: string; body: React.ReactNode }[] = [
   { title: 'Sync double-system audio', body: <>Recorded sound on a separate recorder? Drop both clips on the timeline, then Clip menu, <em>Sync Clips by Audio</em>. Loudness envelopes are cross-correlated, each clip gets an offset and a match percentage, and the checked ones move into place - linked video travels with its audio.</> },
   { title: 'Split screen and montages', body: <>Select 2-4 clips and run Sequence, <em>Split Screen / Picture-in-Picture</em> for side-by-side, stacked, grid or corner-PIP layouts. Sequence, <em>Auto Montage</em> builds a whole new sequence: pick a music track and your photos/clips, and they are cut to the detected beat grid with gentle Ken Burns moves.</> },
   { title: 'Batch exports', body: <>The Export panel has a Render Queue: dial in settings, press <em>Add to Queue</em>, change the preset or the sequence and add again. <em>Start Queue</em> renders every item back to back from the latest project state, downloading each file as it lands.</> },
+  { title: 'Proxy media', body: <>Importing HD+ footage offers a one-click proxy. Proxies play in the timeline and monitors (look for the PX badge); exports always use the originals. File menu, <em>Proxy</em> manages everything, and Settings, Playback sets size and codec.</> },
+  { title: 'Speech-to-text captions', body: <>Graphics menu, <em>Transcribe Sequence</em> (or the Captions panel button) runs real on-device Whisper transcription and writes timed captions. Pick a model and language in Settings, Captions - models download once and are cached.</> },
+  { title: 'Magic Mask (no green screen)', body: <>Select a clip, then Clip menu, <em>Magic Mask</em>: paint a rough hint on one frame and the subject is tracked through the clip as an animated mask - rotoscope without a green screen. Use it to isolate a grade, blur a face, or cut out a subject.</> },
+  { title: 'Voice cleanup', body: <>Right-click an audio or video asset and choose <em>Clean Up Voice</em> to bake a denoised, de-essed take with presets for dialogue, podcast and noisy rooms. Toggle the cleaned take per clip with the C button in the Audio Clip Mixer.</> },
+  { title: 'Storyboard mode', body: <>Sequence menu, <em>Storyboard Panel</em> lays shots out as cards you can drag to reorder, retime, or drop straight into the timeline. Build the story shape first, then fine-cut on the timeline.</> },
+  { title: 'Motion graphics library', body: <>Design a graphic in Essential Graphics, then <em>Save to Library</em> to keep it forever - your templates appear in Browse and the Libraries panel, survive reloads, and can be exported as a file to share.</> },
 ];
 
 export function LearnPanel() {

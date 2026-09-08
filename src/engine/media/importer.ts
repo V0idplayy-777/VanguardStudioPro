@@ -98,6 +98,21 @@ function maybeAutoSequence(asset: MediaAsset, patch: Partial<MediaAsset>) {
   logEvent('info', 'Sequence created from import', `${w}x${h} @ ${fps} fps to match "${asset.name}"`);
 }
 
+/**
+ * Settings > Playback: offer a one-click proxy the first time HD+ footage
+ * finishes decoding. Never interrupts another modal.
+ */
+function maybeOfferProxy(asset: MediaAsset, patch: Partial<MediaAsset>) {
+  if (!settings().proxyAutoOffer) return;
+  if (asset.kind !== 'video') return;
+  const w = patch.width ?? asset.width;
+  if (!w || w <= 1920) return;
+  if (useUI.getState().modal) return;
+  const live = useProject.getState().project.assets.find((x) => x.id === asset.id);
+  if (!live || live.proxy) return;
+  useUI.getState().openModal({ kind: 'proxyManager', payload: { offerIds: [asset.id] } });
+}
+
 export async function decodeAsset(asset: MediaAsset, blob: Blob) {
   const rec = getMedia(asset.id);
   if (!rec) return;
@@ -140,6 +155,7 @@ export async function decodeAsset(asset: MediaAsset, blob: Blob) {
     if (!probe.hasVideo && asset.kind === 'video') patch.kind = 'audio';
     patchAsset(asset.id, patch);
     maybeAutoSequence(asset, patch);
+    maybeOfferProxy(asset, patch);
 
     // Video source
     if (probe.hasVideo) {

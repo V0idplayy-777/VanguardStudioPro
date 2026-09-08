@@ -1,4 +1,5 @@
 import type { Id, MediaAsset } from '../../types/project';
+import { useSettings } from '../../state/settingsStore';
 
 /*
   In-memory store of file handles / blobs for imported media. Project JSON only
@@ -23,6 +24,12 @@ export interface MediaRecord {
    *  iterator the program monitor plays through. */
   scratchVideo?: VideoSource;
   scratchVideoPromise?: Promise<VideoSource | null> | null;
+  /** Lightweight proxy encode (same duration/fps, smaller frame). */
+  proxyBlob?: Blob;
+  proxyUrl?: string;
+  proxyVideo?: VideoSource;
+  /** Baked "cleaned" voice audio (see voiceCleanup.ts). */
+  enhancedAudio?: AudioBuffer;
   /** Error if decoding failed. */
   error?: string;
   ready: Promise<void>;
@@ -90,8 +97,10 @@ export function removeMedia(assetId: Id) {
   const rec = records.get(assetId);
   if (!rec) return;
   URL.revokeObjectURL(rec.url);
+  if (rec.proxyUrl) URL.revokeObjectURL(rec.proxyUrl);
   rec.video?.dispose();
   rec.scratchVideo?.dispose();
+  rec.proxyVideo?.dispose();
   rec.image?.close?.();
   records.delete(assetId);
   emit();
@@ -154,4 +163,43 @@ export function computePeaks(buffer: AudioBuffer, res = PEAK_RES): Float32Array[
 
 export function isVideoAsset(a: MediaAsset) {
   return a.kind === 'video';
+}
+
+/* ---------- proxy media ---------- */
+
+/**
+ * Monotonic token bumped whenever proxy availability or the global proxy
+ * toggle changes. The compositor folds it into its cache key so playback
+ * never serves frames decoded from the wrong source.
+ */
+let proxyToken = 1;
+export function proxyVersion() {
+  return proxyToken;
+}
+export function bumpProxyVersion() {
+  proxyToken++;
+  emit();
+}
+
+function proxyToggleOn(): boolean {
+  try {
+    return useSettings.getState().proxyEnabled;
+  } catch {
+    return true;
+  }
+}
+
+/** True when timeline/monitors should decode this asset's proxy file. */
+export function isProxyActive(asset: MediaAsset | undefined, rec?: MediaRecord): boolean {
+  if (!asset || asset.proxy?.status !== 'ready') return false;
+  const r = rec ?? (asset ? records.get(asset.id) : undefined);
+  return !!r?.proxyVideo && proxyToggleOn();
+}
+
+/** The video source playback should use (proxy when active, else original). Export always uses the original. */
+export function playbackVideoSource(asset: MediaAsset | undefined, rec?: MediaRecord): VideoSource | undefined {
+  const r = rec ?? (asset ? records.get(asset.id) : undefined);
+  if (!r) return undefined;
+  if (asset && isProxyActive(asset, r) && r.proxyVideo) return r.proxyVideo;
+  return r.video;
 }

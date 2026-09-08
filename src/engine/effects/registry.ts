@@ -1357,6 +1357,46 @@ export const EFFECTS: EffectDef[] = [
     ],
   ),
 
+  def(
+    'magicMask',
+    'Magic Mask (AI)',
+    'Keying',
+    'AI person mask tracked through the clip - no green screen needed. Analyze first with Clip > Magic Mask, then tune the matte here.',
+    [
+      P.sel('mode', 'Keep', 0, [
+        { value: 0, label: 'Subject (background transparent)' },
+        { value: 1, label: 'Background (subject transparent)' },
+        { value: 2, label: 'Show Matte Only' },
+      ]),
+      P.num('feather', 'Edge Feather', 2, 0, 20, 0.1, { group: 'Matte Refinement' }),
+      P.num('contract', 'Matte Contract', 0, 0, 100, 0.5, { group: 'Matte Refinement' }),
+      P.bool('invert', 'Invert Matte', false, { group: 'Matte Refinement' }),
+      P.pct('opacity', 'Matte Opacity', 100),
+    ],
+    [
+      {
+        frag: `
+  float m = texture(u_matte, uv).r;
+  if (p_feather > 0.01) {
+    vec2 px = p_feather / u_res * 2.0;
+    m = (m
+      + texture(u_matte, uv + vec2(px.x, 0.0)).r + texture(u_matte, uv - vec2(px.x, 0.0)).r
+      + texture(u_matte, uv + vec2(0.0, px.y)).r + texture(u_matte, uv - vec2(0.0, px.y)).r) / 5.0;
+  }
+  float ct = p_contract / 100.0 * 0.5;
+  m = smoothstep(ct, 1.0 - ct, m);
+  if (p_invert > 0.5) m = 1.0 - m;
+  if (p_mode > 1.5) { outColor = vec4(vec3(m), 1.0); }
+  else {
+    vec3 col = c.rgb; float a = c.a; if (a > 0.0001) col /= a;
+    float keep = (p_mode > 0.5) ? (1.0 - m) : m;
+    float oa = a * mix(1.0, keep, p_opacity / 100.0);
+    outColor = vec4(col * oa, oa);
+  }`,
+      },
+    ],
+  ),
+
   /* ===== Generate ===== */
   def(
     'fourColorGradient',

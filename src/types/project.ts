@@ -84,6 +84,20 @@ export interface MediaAsset {
   srcOut?: number;
   /** Whether the media is currently missing (needs relinking). */
   offline: boolean;
+  /** Proxy media status. generation progress lives outside the document (see proxy.ts). */
+  proxy?: {
+    status: 'ready' | 'pending';
+    width: number;
+    height: number;
+    bytes: number;
+    createdAt: number;
+  };
+  /** Voice cleanup: a baked "cleaned" copy of the audio is stored for this asset. */
+  cleanedAudio?: {
+    bytes: number;
+    createdAt: number;
+    preset: string;
+  };
   createdAt: number;
   meta: AssetMetadata;
   /** Optional per-asset interpretation overrides. */
@@ -160,6 +174,8 @@ export interface EffectInstance {
   masks: EffectMask[];
   /** Collapsed in Effect Controls UI. */
   collapsed?: boolean;
+  /** Opaque host data keyed by the effect: magic-mask track id, preset names, ... */
+  data?: Record<string, string | number | boolean>;
 }
 
 export type BlendMode =
@@ -250,6 +266,8 @@ export interface ClipAudio {
   muted: boolean;
   channelMode: 'stereo' | 'left' | 'right' | 'swap' | 'mono';
   invertPhase: boolean;
+  /** Use the baked "cleaned" audio copy for this clip when one exists (Voice Cleanup). */
+  enhanced?: boolean;
 }
 
 export interface Clip {
@@ -610,6 +628,7 @@ export function defaultClipAudio(): ClipAudio {
     muted: false,
     channelMode: 'stereo',
     invertPhase: false,
+    enhanced: false,
   };
 }
 

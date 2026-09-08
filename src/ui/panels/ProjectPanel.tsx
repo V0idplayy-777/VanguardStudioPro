@@ -146,6 +146,8 @@ export function ProjectPanel() {
       if (assets.length && assets.some((a) => a.kind !== 'sequence')) {
         items.push({ label: 'Insert at Playhead', shortcut: ',', onSelect: () => cmd.addClipsToSequenceAtPlayhead(assets, 'insert') });
         items.push({ label: 'Overwrite at Playhead', shortcut: '.', onSelect: () => cmd.addClipsToSequenceAtPlayhead(assets, 'overwrite') });
+        const proxyable = assets.filter((a) => a.hasVideo && a.kind !== 'sequence' && a.kind !== 'generator' && a.proxy?.status !== 'ready');
+        if (proxyable.length) items.push({ label: `Create Prox${proxyable.length === 1 ? 'y' : 'ies'} (${proxyable.length})`, onSelect: () => void import('../../engine/media/proxy').then((m) => m.createProxiesForAssets(proxyable.map((a) => a.id))) });
       }
       if (single && single.kind !== 'sequence') items.push({ label: 'New Sequence From Clip', onSelect: () => cmd.newSequenceFromClip(single) });
       if (single?.kind === 'sequence' && single.sequenceId) items.push({ label: 'Sequence Settings...', onSelect: () => { cmd.openSequence(single.sequenceId!); ui.openModal({ kind: 'sequenceSettings' }); } });
@@ -157,6 +159,11 @@ export function ProjectPanel() {
         if (single.kind === 'video' || single.kind === 'image') items.push({ label: 'Interpret Footage...', onSelect: () => ui.openModal({ kind: 'interpretFootage', payload: { assetId: single.id } }) });
         if (single.offline) items.push({ label: 'Link Media...', onSelect: () => ui.openModal({ kind: 'linkMedia', payload: { assetIds: [single.id] } }) });
         if (single.kind === 'video') items.push({ label: 'Scene Edit Detection...', onSelect: () => ui.openModal({ kind: 'sceneDetect', payload: { assetId: single.id } }) });
+        if (single.hasVideo && single.kind !== 'sequence') {
+          if (single.proxy?.status === 'ready') items.push({ label: 'Delete Proxy', onSelect: () => void import('../../engine/media/proxy').then((m) => m.detachProxy(single.id, true)) });
+          else if (single.proxy?.status !== 'pending') items.push({ label: 'Create Proxy', onSelect: () => void import('../../engine/media/proxy').then((m) => m.createProxyForAsset(single.id)) });
+        }
+        if (single.hasAudio) items.push({ label: 'Clean Up Voice...', onSelect: () => ui.openModal({ kind: 'voiceCleanup', payload: { assetId: single.id } }) });
         items.push({ label: 'Properties', onSelect: () => { ui.setFocusedPanel('info'); } });
       }
       items.push({ separator: true });
@@ -396,6 +403,12 @@ function ListRow({ row, selected, renaming, onRename, onSelect, onOpen, onDragSt
           {row.kind === 'asset' && row.asset.offline ? <span style={{ color: 'var(--c-danger)', marginRight: 4 }}>Offline</span> : null}
           {row.kind === 'asset' && row.asset.meta.good ? <Icon name="check" size={10} style={{ marginRight: 3, color: 'var(--c-ok)' }} /> : null}
           {row.kind === 'bin' ? row.bin.name : row.asset.name}
+          {row.kind === 'asset' && row.asset.proxy ? (
+            <span className="pill proxy-pill" title={row.asset.proxy.status === 'ready' ? `Proxy ready — ${row.asset.proxy.width}×${row.asset.proxy.height}` : 'Proxy building…'}>{row.asset.proxy.status === 'ready' ? 'PX' : 'PX…'}</span>
+          ) : null}
+          {row.kind === 'asset' && row.asset.cleanedAudio ? (
+            <span className="pill cleaned-pill" title={`Cleaned voice — ${row.asset.cleanedAudio.preset}`}>VC</span>
+          ) : null}
         </span>
       )}
       <span style={{ width: 8 }} />
@@ -440,6 +453,8 @@ function IconCard({ row, selected, renaming, onRename, onSelect, onOpen, onDragS
           <>
             <Thumb asset={row.asset} w={Math.round(useUI.getState().projectIconSize * 1.5)} h={Math.round(useUI.getState().projectIconSize * 0.85)} time={scrub != null && row.asset.duration ? scrub * row.asset.duration : undefined} contain />
             <span className="dur">{durationOf(row.asset, project)}</span>
+            {row.asset.proxy ? <span className="pill proxy-pill badge-tl" title={row.asset.proxy.status === 'ready' ? `Proxy ready — ${row.asset.proxy.width}×${row.asset.proxy.height}` : 'Proxy building…'}>{row.asset.proxy.status === 'ready' ? 'PX' : 'PX…'}</span> : null}
+            {row.asset.cleanedAudio ? <span className="pill cleaned-pill badge-tl2" title={`Cleaned voice — ${row.asset.cleanedAudio.preset}`}>VC</span> : null}
             {scrub != null ? <span className="hover-scrub" style={{ width: `${scrub * 100}%` }} /> : null}
           </>
         )}

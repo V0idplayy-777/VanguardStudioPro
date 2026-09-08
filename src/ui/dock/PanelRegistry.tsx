@@ -15,6 +15,7 @@ import { EssentialGraphicsPanel } from '../panels/EssentialGraphics';
 import { CaptionsPanel, MarkersPanel, HistoryPanel, InfoPanel, MetadataPanel, EventsPanel, LearnPanel } from '../panels/UtilityPanels';
 import { ExportPanel } from '../panels/ExportPanel';
 import { ToolsPanel, LibrariesPanel, MediaBrowserPanel } from '../panels/MiscPanels';
+import { StoryboardPanel } from '../panels/StoryboardPanel';
 
 class PanelBoundary extends React.Component<{ children: React.ReactNode; name: string }, { error: Error | null }> {
   state = { error: null as Error | null };
@@ -59,6 +60,7 @@ const REGISTRY: Record<PanelId, React.ComponentType> = {
   tools: ToolsPanel,
   loudness: LoudnessPanel,
   mediaBrowser: MediaBrowserPanel,
+  storyboard: StoryboardPanel,
   learn: LearnPanel,
 };
 

@@ -4,6 +4,8 @@ import { useProject } from '../state/projectStore';
 import { usePlayback } from '../engine/playback/playback';
 import { cmd } from './commands';
 import { useLayout } from '../state/layoutStore';
+import { useSettings } from '../state/settingsStore';
+import { shortcutOverrides } from '../state/shortcutStore';
 import { isMac } from '../engine/util';
 import { secretKey } from '../easter/eggs';
 
@@ -117,6 +119,17 @@ export const SHORTCUTS: ShortcutDef[] = [
   { id: 'escape', keys: 'Esc', label: 'Cancel / deselect', category: 'Edit', run: () => escapeAction() },
   { id: 'palette', keys: `${mod}+Shift+P`, label: 'Command palette', category: 'Window', run: () => void import('../ui/CommandPalette').then((m) => m.usePalette.getState().toggle()) },
   { id: 'settings', keys: `${mod}+,`, label: 'Settings', category: 'Window', run: () => useUI.getState().openModal({ kind: 'preferences' }) },
+  // Proxies, captions, AI, storyboard
+  { id: 'toggleProxy', keys: 'Shift+P', label: 'Toggle proxy playback', category: 'Playback', run: () => void import('../engine/media/proxy').then((m) => m.toggleProxyPlayback()) },
+  { id: 'proxyManager', keys: `${mod}+Alt+P`, label: 'Proxy manager', category: 'Playback', run: () => useUI.getState().openModal({ kind: 'proxyManager' }) },
+  { id: 'transcribe', keys: `${mod}+Shift+T`, label: 'Transcribe sequence...', category: 'Captions', run: () => useUI.getState().openModal({ kind: 'transcribe' }) },
+  { id: 'storyboard', keys: 'T', label: 'Open Storyboard panel', category: 'Window', run: () => {
+    const ui = useUI.getState();
+    useLayout.getState().openPanel(ui.workspace, 'storyboard');
+    ui.setFocusedPanel('storyboard');
+  } },
+  { id: 'magicMask', keys: `${mod}+Alt+M`, label: 'Magic Mask (AI rotoscope)...', category: 'Effects', run: () => useUI.getState().openModal({ kind: 'magicMask' }) },
+  { id: 'voiceCleanup', keys: `${mod}+Alt+A`, label: 'Clean up voice...', category: 'Audio', run: () => useUI.getState().openModal({ kind: 'voiceCleanup' }) },
 ];
 
 function seqHasLinked() {
@@ -178,8 +191,23 @@ export function describeKey(e: KeyboardEvent): string {
   return parts.join('+');
 }
 
-const byKeys = new Map<string, ShortcutDef>();
-for (const s of SHORTCUTS) byKeys.set(s.keys, s);
+/**
+ * Factory defaults plus the user's remapping overrides. Unassigned commands
+ * carry `keys: ''` and are skipped by the dispatcher.
+ */
+export function effectiveShortcuts(): ShortcutDef[] {
+  const { overrides, removed } = shortcutOverrides();
+  return SHORTCUTS.map((s) => {
+    if (removed.includes(s.id)) return { ...s, keys: '' };
+    const o = overrides[s.id];
+    return o ? { ...s, keys: o } : s;
+  });
+}
+
+/** Find the command currently bound to `keys` (for conflict warnings), if any. */
+export function shortcutConflict(keys: string, exceptId?: string): ShortcutDef | undefined {
+  return effectiveShortcuts().find((s) => s.keys === keys && s.id !== exceptId);
+}
 
 export function useGlobalShortcuts() {
   useEffect(() => {
@@ -204,7 +232,7 @@ export function useGlobalShortcuts() {
         if (!(e.ctrlKey || e.metaKey)) return;
       }
       const desc = describeKey(e);
-      const def = byKeys.get(desc);
+      const def = effectiveShortcuts().find((s) => s.keys !== '' && s.keys === desc);
       if (!def) {
         // Single-letter tools
         if (!e.ctrlKey && !e.metaKey && !e.altKey && TOOL_KEYS[e.key.toLowerCase()] && !e.shiftKey) {
@@ -236,5 +264,6 @@ export function useGlobalShortcuts() {
 }
 
 export function shortcutFor(id: string): string | undefined {
-  return SHORTCUTS.find((s) => s.id === id)?.keys;
+  const s = effectiveShortcuts().find((x) => x.id === id);
+  return s && s.keys !== '' ? s.keys : undefined;
 }

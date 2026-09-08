@@ -12,6 +12,7 @@ import { TRANSITIONS, AUDIO_TRANSITIONS } from '../engine/effects/transitions';
 import { EFFECTS } from '../engine/effects/registry';
 import { AUDIO_EFFECTS } from '../engine/effects/audioRegistry';
 import { usePalette } from './CommandPalette';
+import { useSettings } from '../state/settingsStore';
 
 const WORKSPACES: { id: WorkspaceId; label: string }[] = [
   { id: 'assembly', label: 'Assembly' },
@@ -92,6 +93,15 @@ export function MenuBar() {
             { label: 'Record Voiceover...', onSelect: () => openModal({ kind: 'recordVoiceover' }) },
             { label: 'Record Screen...', onSelect: () => openModal({ kind: 'capture', payload: { kind: 'screen' } }) },
             { label: 'Record Webcam...', onSelect: () => openModal({ kind: 'capture', payload: { kind: 'webcam' } }) },
+          ],
+        },
+        {
+          label: 'Proxy',
+          submenu: [
+            { label: 'Create Proxies for Project', onSelect: () => void cmd.createProxiesForProject() },
+            { label: 'Proxy Manager...', shortcut: sc('proxyManager'), onSelect: () => openModal({ kind: 'proxyManager' }) },
+            { separator: true },
+            { label: 'Use Proxies', shortcut: sc('toggleProxy'), checked: useSettings.getState().proxyEnabled, onSelect: () => void cmd.toggleProxyPlayback() },
           ],
         },
         { separator: true },
@@ -189,10 +199,12 @@ export function MenuBar() {
         { label: 'Scene Edit Detection...', disabled: !hasSel, onSelect: () => openModal({ kind: 'sceneDetect' }) },
         { label: 'Auto Color', disabled: !hasSel, onSelect: () => void cmd.autoColorSelection() },
         { label: 'Green Screen Key (Chroma)...', disabled: !hasSel, onSelect: () => openModal({ kind: 'greenScreen' }) },
+        { label: 'Magic Mask (AI Rotoscope)...', shortcut: sc('magicMask'), disabled: !hasSel, onSelect: () => openModal({ kind: 'magicMask' }) },
         { label: 'Pan & Zoom (Ken Burns)...', disabled: !hasSel, onSelect: () => openModal({ kind: 'kenBurns' }) },
         { label: 'Stabilize (Warp Stabilizer)...', onSelect: () => openModal({ kind: 'stabilize' }) },
         { label: 'Normalize Audio (-14 LUFS)', disabled: !hasSel, onSelect: () => void cmd.normalizeAudio() },
         { label: 'Remove Silence...', disabled: !hasSel, onSelect: () => openModal({ kind: 'removeSilence' }) },
+        { label: 'Clean Up Voice...', shortcut: sc('voiceCleanup'), disabled: !hasSel, onSelect: () => openModal({ kind: 'voiceCleanup' }) },
         { label: 'Sync Clips by Audio...', onSelect: () => openModal({ kind: 'syncAudio' }) },
         { separator: true },
         { label: 'Remove Effects', disabled: !hasSel, onSelect: () => cmd.removeEffects(selectedClipIds()) },
@@ -235,6 +247,8 @@ export function MenuBar() {
         { label: 'Auto Reframe...', onSelect: () => openModal({ kind: 'autoReframe' }) },
         { label: 'Auto Montage (Cut to Music)...', onSelect: () => openModal({ kind: 'autoMontage' }) },
         { label: 'Split Screen / Picture-in-Picture...', onSelect: () => openModal({ kind: 'splitScreen' }) },
+        { separator: true },
+        { label: 'Storyboard Panel', shortcut: sc('storyboard'), onSelect: () => useLayout.getState().openPanel(ws, 'storyboard') },
       ],
     },
     {
@@ -272,6 +286,9 @@ export function MenuBar() {
         { separator: true },
         { label: 'Create Captions from Transcript...', onSelect: () => openModal({ kind: 'captionsImport' }) },
         { label: 'Import Captions File...', onSelect: () => void cmd.importCaptions() },
+        { label: 'Transcribe Sequence (Speech to Text)...', shortcut: sc('transcribe'), onSelect: () => openModal({ kind: 'transcribe' }) },
+        { separator: true },
+        { label: 'Save Selected Graphic as Template', onSelect: () => cmd.saveGraphicAsTemplate() },
       ],
     },
     {

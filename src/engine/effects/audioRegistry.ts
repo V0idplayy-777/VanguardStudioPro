@@ -280,6 +280,65 @@ export const AUDIO_EFFECTS: EffectDef[] = [
       n('truePeak', 'True Peak Ceiling', -1, -9, 0, 0.1, { unit: 'dBTP' }),
     ],
   ),
+  adef(
+    'aHumRemove',
+    'Hum Remover',
+    'Audio: EQ',
+    'Notch bank for mains hum: removes the fundamental plus harmonics in one insert.',
+    [
+      sel('frequency', 'Mains Frequency', 1, [
+        { value: 0, label: '50 Hz (EU / Asia)' },
+        { value: 1, label: '60 Hz (Americas)' },
+      ]),
+      n('harmonics', 'Harmonics', 4, 1, 6, 1),
+      n('q', 'Notch Width (Q)', 18, 2, 60, 0.5),
+      n('mix', 'Mix', 100, 0, 100, 0.5, { unit: '%' }),
+    ],
+    [
+      { name: '50 Hz Studio', values: { frequency: 0, harmonics: 4, q: 18 } },
+      { name: '60 Hz Location', values: { frequency: 1, harmonics: 5, q: 14 } },
+    ],
+  ),
+  adef(
+    'aVoiceLeveler',
+    'Voice Leveler',
+    'Audio: Dynamics',
+    'Slow speech-optimized auto-gain that evens out dialogue, with a safety ceiling.',
+    [
+      n('target', 'Target Level', -20, -40, -6, 0.5, { unit: 'dB' }),
+      n('strength', 'Strength', 60, 0, 100, 1, { unit: '%' }),
+      n('maxGain', 'Max Gain', 10, 0, 24, 0.5, { unit: 'dB' }),
+      n('ceiling', 'Ceiling', -1.5, -12, 0, 0.1, { unit: 'dB' }),
+    ],
+    [
+      { name: 'Podcast', values: { target: -20, strength: 65, maxGain: 12 } },
+      { name: 'Gentle', values: { target: -23, strength: 35, maxGain: 6 } },
+    ],
+  ),
+  adef(
+    'aRoomTone',
+    'Room Tone Reducer',
+    'Audio: Dynamics',
+    'Soft downward expansion that pushes room tone and reverb tails down between words.',
+    [
+      n('amount', 'Reduction', 50, 0, 100, 1, { unit: '%' }),
+      n('threshold', 'Threshold', -42, -80, -12, 0.5, { unit: 'dB' }),
+      n('softness', 'Soft Knee', 60, 0, 100, 1, { unit: '%' }),
+      n('mix', 'Mix', 100, 0, 100, 0.5, { unit: '%' }),
+    ],
+  ),
+  adef(
+    'aVoiceDenoise',
+    'Voice Denoise (Realtime)',
+    'Audio: Dynamics',
+    'Dynamic high-frequency hiss filter for dialogue. For heavy noise, bake the full cleanup from Clip > Clean Up Voice.',
+    [
+      n('amount', 'Reduction', 50, 0, 100, 1, { unit: '%' }),
+      n('threshold', 'Threshold', -48, -80, -12, 0.5, { unit: 'dB' }),
+      n('hissFreq', 'Hiss Above', 5000, 2000, 12000, 50, { unit: 'Hz' }),
+      n('mix', 'Mix', 100, 0, 100, 0.5, { unit: '%' }),
+    ],
+  ),
 ];
 
 export const AUDIO_EFFECT_MAP: Record<string, EffectDef> = Object.fromEntries(AUDIO_EFFECTS.map((e) => [e.type, e]));

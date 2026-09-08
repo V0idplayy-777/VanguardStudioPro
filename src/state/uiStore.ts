@@ -29,6 +29,7 @@ export type PanelId =
   | 'tools'
   | 'loudness'
   | 'mediaBrowser'
+  | 'storyboard'
   | 'learn';
 
 export type WorkspaceId = 'editing' | 'assembly' | 'color' | 'effects' | 'audio' | 'graphics' | 'captions' | 'review' | 'export' | 'custom';
@@ -103,7 +104,11 @@ export interface ModalRequest {
     | 'syncAudio'
     | 'splitScreen'
     | 'autoMontage'
-    | 'greenScreen';
+    | 'greenScreen'
+    | 'proxyManager'
+    | 'transcribe'
+    | 'magicMask'
+    | 'voiceCleanup';
   payload?: any;
 }
 

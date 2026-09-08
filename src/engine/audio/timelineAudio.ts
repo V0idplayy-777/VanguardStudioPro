@@ -201,7 +201,7 @@ export class TimelineAudio {
       if (!track || !clip.enabled || clip.audio.muted) continue;
       if (this.active.has(clip.id)) continue;
       const media = getMedia(clip.assetId);
-      let buffer = media?.audio;
+      let buffer = clip.audio.enhanced && media?.enhancedAudio ? media.enhancedAudio : media?.audio;
       let nestedOffset = 0;
       if (!buffer && clip.nestedSequenceId) {
         // Nested sequences play their own audio through a flattened prerender when exported; for
@@ -435,7 +435,8 @@ async function collectClipBuffers(project: Project, seq: Sequence, ctx: BaseAudi
   for (const clip of seq.clips) {
     if (!audioTrackIds.has(clip.trackId) || !clip.enabled || clip.audio.muted) continue;
     if (clipEnd(clip) <= startFrame || clip.start >= endFrame) continue;
-    let buffer = getMedia(clip.assetId)?.audio;
+    const media = getMedia(clip.assetId);
+    let buffer = clip.audio.enhanced && media?.enhancedAudio ? media.enhancedAudio : media?.audio;
     if (!buffer && clip.nestedSequenceId) {
       const nested = project.sequences.find((s) => s.id === clip.nestedSequenceId);
       if (nested) {

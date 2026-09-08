@@ -5,7 +5,8 @@ import { BARS_FRAG, BLEND_FRAG, COPY_FRAG, MASK_MIX_FRAG, MOTION_FRAG, PRESENT_F
 import { EFFECT_MAP } from '../effects/registry';
 import { TRANSITION_MAP } from '../effects/transitions';
 import { evalParam } from '../keyframes';
-import { getMedia } from '../media/mediaStore';
+import { getMedia, playbackVideoSource, proxyVersion } from '../media/mediaStore';
+import { peekMaskSample, prefetchMask, type MaskSample } from '../mask/maskStore';
 import { clipEnd, sourceTimeAt, transitionAtCut, transitionRange } from '../timeline/edits';
 import { renderCaption, renderGraphic } from '../graphics/graphicRenderer';
 import { hexToRgb } from '../util';
@@ -35,6 +36,8 @@ export interface RenderOptions {
   soloClipId?: string | null;
   /** Nested depth guard. */
   depth?: number;
+  /** Decode proxy files when available (default true). Export always passes false. */
+  useProxy?: boolean;
 }
 
 const blendIndex: Record<BlendMode, number> = Object.fromEntries(BLEND_MODES.map((b, i) => [b.id, i])) as any;
@@ -62,6 +65,8 @@ export class Compositor {
   private echoBuffers = new Map<string, RenderTarget>();
   private blackTex: WebGLTexture;
   private whiteMaskTex: WebGLTexture;
+  /** Uploaded Magic Mask mattes, keyed by track id. */
+  private magicTexCache = new Map<string, { tex: WebGLTexture; key: string; w: number; h: number; rgba: Uint8ClampedArray<ArrayBuffer> }>();
   frameCounter = 0;
   /** Hysteresis counter for shrinking the present canvas. */
   private smallPresents = 0;
@@ -200,7 +205,8 @@ export class Compositor {
       return { tex, width: img.width, height: img.height };
     }
     if (asset.kind === 'video' || asset.hasVideo) {
-      const src = media.video;
+      const src = opts.useProxy === false ? media.video : playbackVideoSource(asset, media);
+      const viaProxy = !!src && src !== media.video;
       if (!src) {
         this.lastFrameIncomplete = true;
         return null;
@@ -227,7 +233,9 @@ export class Compositor {
         }
         return null;
       }
-      const key = src.kind === 'element' ? `t${Math.round(srcTime * 1000)}` : `t${Math.round(srcTime * 1000)}`;
+      // The cache key folds in the proxy token + source marker so toggling
+      // proxies (or a proxy finishing mid-session) can never serve a stale frame.
+      const key = `${viaProxy ? 'p' : 'o'}${proxyVersion()}:t${Math.round(srcTime * 1000)}`;
       const w = src.width,
         h = src.height;
       const tex = this.cacheTexture(key, 'asset:' + asset.id, (t) => this.core.upload(t, img as TexImageSource), w, h);
@@ -305,6 +313,51 @@ export class Compositor {
     return prev;
   }
 
+  /**
+   * Uploaded Magic Mask matte for a clip-local frame. The render path is
+   * synchronous, so this serves the nearest cached keyframe; on a miss it
+   * kicks off an async fetch, flags the frame incomplete (the playback loop
+   * re-renders), and temporarily shows the original image.
+   */
+  private magicMatteTexture(trackId: string, local: number): WebGLTexture {
+    const sample: MaskSample | null = peekMaskSample(trackId, local);
+    if (!sample) {
+      prefetchMask(trackId, local);
+      this.lastFrameIncomplete = true;
+      return this.whiteMaskTex;
+    }
+    // Cheap identity: dims + sampled bytes. Re-upload only when it changes.
+    let hash = sample.width * 1315423911 + sample.height * 97 + sample.alpha.length;
+    for (let i = 0; i < sample.alpha.length; i += 257) hash = (hash * 31 + sample.alpha[i]) | 0;
+    const key = String(hash);
+    let entry = this.magicTexCache.get(trackId);
+    if (entry && entry.w === sample.width && entry.h === sample.height && entry.key === key) return entry.tex;
+    const rgba = entry && entry.rgba.length === sample.alpha.length * 4 ? entry.rgba : new Uint8ClampedArray(sample.alpha.length * 4);
+    for (let i = 0, j = 0; i < sample.alpha.length; i++, j += 4) {
+      rgba[j] = 255;
+      rgba[j + 1] = 255;
+      rgba[j + 2] = 255;
+      rgba[j + 3] = sample.alpha[i];
+    }
+    const tex = this.core.upload(entry?.tex ?? null, new ImageData(rgba, sample.width, sample.height));
+    if (!entry) {
+      if (this.magicTexCache.size > 8) {
+        const oldest = this.magicTexCache.keys().next().value;
+        if (oldest) {
+          this.core.deleteTexture(this.magicTexCache.get(oldest)!.tex);
+          this.magicTexCache.delete(oldest);
+        }
+      }
+      this.magicTexCache.set(trackId, { tex, key, w: sample.width, h: sample.height, rgba });
+    } else {
+      entry.key = key;
+      entry.w = sample.width;
+      entry.h = sample.height;
+      entry.rgba = rgba;
+    }
+    return tex;
+  }
+
   /** Apply a list of effects to an input texture (premultiplied). Returns a RenderTarget the caller must release. */
   private applyEffects(input: WebGLTexture, width: number, height: number, effects: EffectInstance[], local: number, seqTime: number, fps: number, ownerId: string, matteTex: WebGLTexture | null): RenderTarget {
     const gl = this.gl;
@@ -345,6 +398,11 @@ export class Compositor {
         }
         if (fx.type === 'trackMatteKey') {
           this.core.bindTex(3, matteTex ?? this.blackTex);
+          this.core.setInt(prog, 'u_matte', 3);
+        }
+        if (fx.type === 'magicMask') {
+          const trackId = String(fx.data?.trackId ?? '');
+          this.core.bindTex(3, trackId ? this.magicMatteTexture(trackId, local) : this.whiteMaskTex);
           this.core.setInt(prog, 'u_matte', 3);
         }
         this.core.setUniform(prog, 'u_res', [width, height]);

@@ -15,6 +15,7 @@ import { setParamAt } from '../timeline/Timeline';
 import { cmd } from '../../app/commands';
 import { uid, hexToRgb, rgbToHex, clamp } from '../../engine/util';
 import { framesToTimecode } from '../../engine/timecode';
+import { cleanupRemovedEffect } from '../../engine/mask/maskStore';
 
 const BLEND_MODES = ['normal', 'dissolve', 'darken', 'multiply', 'colorBurn', 'linearBurn', 'lighten', 'screen', 'colorDodge', 'linearDodge', 'overlay', 'softLight', 'hardLight', 'difference', 'exclusion', 'hue', 'saturation', 'color', 'luminosity'];
 
@@ -161,7 +162,7 @@ export function EffectControlsPanel() {
       { label: 'Move Down', disabled: idx === clip.effects.length - 1, onSelect: () => write('Reorder effects', (c) => { const i = c.effects.findIndex((x) => x.id === fx.id); if (i < c.effects.length - 1) { const [f] = c.effects.splice(i, 1); c.effects.splice(i + 1, 0, f); } }) },
       { separator: true },
       { label: 'Copy Effect', onSelect: () => { cmd.copyEffect(clip.id, fx.id); } },
-      { label: 'Remove Effect', shortcut: 'Delete', danger: true, onSelect: () => write('Remove effect', (c) => { c.effects = c.effects.filter((x) => x.id !== fx.id); }) },
+      { label: 'Remove Effect', shortcut: 'Delete', danger: true, onSelect: () => { write('Remove effect', (c) => { c.effects = c.effects.filter((x) => x.id !== fx.id); }); cleanupRemovedEffect(fx); } },
     ]);
   };
 
@@ -244,7 +245,7 @@ export function EffectControlsPanel() {
                         {!g.def?.audio ? <IconButton icon="maskRect" label="Add rectangle mask" sm noline onClick={(e) => { e.stopPropagation(); addMask(g.fx!.id, 'rectangle'); }} /> : null}
                         <IconButton icon={enabled ? 'fxOn' : 'fxOff'} label={enabled ? 'Disable effect' : 'Enable effect'} sm noline on={enabled} onClick={(e) => { e.stopPropagation(); write('Toggle effect', (c) => { const f = c.effects.find((x) => x.id === g.fx!.id); if (f) f.enabled = !f.enabled; }); }} />
                         <IconButton icon="reset" label="Reset effect" sm noline onClick={(e) => { e.stopPropagation(); write('Reset effect', (c) => { const f = c.effects.find((x) => x.id === g.fx!.id); if (f && g.def) for (const pd of g.def.params) f.params[pd.key] = mkParam(pd.default as ParamValue); }); }} />
-                        <IconButton icon="close" label="Remove effect" sm noline onClick={(e) => { e.stopPropagation(); write('Remove effect', (c) => { c.effects = c.effects.filter((x) => x.id !== g.fx!.id); }); }} />
+                        <IconButton icon="close" label="Remove effect" sm noline onClick={(e) => { e.stopPropagation(); const fx = g.fx!; write('Remove effect', (c) => { c.effects = c.effects.filter((x) => x.id !== fx.id); }); cleanupRemovedEffect(fx); }} />
                       </>
                     ) : g.kind === 'motion' ? (
                       <IconButton icon="reset" label="Reset motion" sm noline onClick={(e) => { e.stopPropagation(); write('Reset motion', (c) => { c.motion = { ...defaultMotion(), opacity: c.motion.opacity, blendMode: c.motion.blendMode }; }); }} />
