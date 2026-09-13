@@ -32,7 +32,7 @@ export type PanelId =
   | 'storyboard'
   | 'learn';
 
-export type WorkspaceId = 'editing' | 'assembly' | 'color' | 'effects' | 'audio' | 'graphics' | 'captions' | 'review' | 'export' | 'custom';
+export type WorkspaceId = 'editing' | 'assembly' | 'color' | 'effects' | 'audio' | 'graphics' | 'retention' | 'captions' | 'review' | 'export' | 'custom';
 
 export interface Selection {
   clipIds: Id[];
@@ -108,7 +108,13 @@ export interface ModalRequest {
     | 'proxyManager'
     | 'transcribe'
     | 'magicMask'
-    | 'voiceCleanup';
+    | 'voiceCleanup'
+    | 'retentionCheck'
+    | 'smartCaptions'
+    | 'rewindTrap'
+    | 'dopamineAudio'
+    | 'loopOutro'
+    | 'brandKit';
   payload?: any;
 }
 

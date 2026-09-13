@@ -374,6 +374,8 @@ export interface CaptionItem {
   style?: Partial<CaptionStyle>;
 }
 
+export type CaptionAnimation = 'none' | 'pop' | 'slideUp' | 'fade' | 'scale' | 'typewriter';
+
 export interface CaptionStyle {
   fontFamily: string;
   fontSize: number;
@@ -389,6 +391,12 @@ export interface CaptionStyle {
   position: number;
   maxWidth: number;
   letterSpacing: number;
+  /** Entry animation applied to each caption as it appears (retention styling). */
+  animation?: CaptionAnimation;
+  /** Auto-highlight the last word of each caption when no *word* markup is present. */
+  kicker?: boolean;
+  /** Colour of the highlighted (kicker) word. */
+  kickerColor?: string;
 }
 
 export interface SequenceSettings {
@@ -590,6 +598,9 @@ export const DEFAULT_CAPTION_STYLE: CaptionStyle = {
   position: 0.9,
   maxWidth: 0.8,
   letterSpacing: 0,
+  animation: 'none',
+  kicker: false,
+  kickerColor: '#ffd54a',
 };
 
 export const DEFAULT_SEQUENCE_SETTINGS: SequenceSettings = {

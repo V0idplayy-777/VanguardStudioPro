@@ -29,7 +29,7 @@ To host somewhere else, run `npm run build` and copy `dist/` to any static file 
 ## What is in the box
 
 **Editing**
-- Dockable workspace: drag tabs between groups, split, float, maximise (backtick), nine preset workspaces plus your own saved layouts.
+- Dockable workspace: drag tabs between groups, split, float, maximise (backtick), ten preset workspaces plus your own saved layouts.
 - Timeline with unlimited video and audio tracks, insert/overwrite, three-point editing from the Source monitor, lift/extract, ripple/rolling/slip/slide/rate-stretch tools, razor, snapping, track targeting, sync lock, linked selection, grouping, nesting, gap closing, clip markers.
 - **Cut to Beats**: razor every clip on the beat markers (detecting them first when needed) so edits land on the rhythm.
 - **Pan & Zoom (Ken Burns)**: one click writes eased scale/position keyframes - Auto mode gives every photo a different move.
@@ -59,6 +59,17 @@ To host somewhere else, run `npm run build` and copy `dist/` to any static file 
 **Graphics and captions**
 - Essential Graphics: text, shapes, layer stacks, transforms with keyframes, in/out animations, a template browser.
 - Captions: import SRT/WebVTT, create from a transcript, style them, export SRT/WebVTT, burn in on export.
+- Caption entry animations (pop, slide-up, fade, scale, typewriter) and a **kicker** highlight word - wrap a word in `*asterisks*` or auto-highlight the last word of every caption.
+
+**Retention (Shorts & long-form)**
+- A dedicated **Retention** workspace (or `Alt+Shift+6`) that puts the Program monitor, Timeline, Captions and Effects front and centre for Shorts editing.
+- **Retention Check**: scores the sequence against the Corporate Retention & Engagement playbook (hook cuts, 2-second pacing, caption style, audio bed, loop outro, comment bait) with a one-click **Fix** per finding.
+- **Smart Captions**: turn captions (or a pasted transcript) into bold, animated, dead-centre micro-captions of 1-3 words per line, burned in on export.
+- **Auto Reset: Zoom Punches** (a subtle scale punch every 2 seconds on static clips) and **Flash on Cuts** (a white flash at every cut) enforce the 2-second reset.
+- **Rewind Trap**: plant a split-second text or image easter egg in any corner so viewers rewind to catch it. **Comment Bait** misspells one word on purpose for the comments to correct.
+- **Dopamine Audio**: set the music bed to ~5% (-26 dB) and add synthesized SFX (pop, ding, swoosh, whoosh, riser, boom, tick) at the playhead or on every caption - all generated in the browser, nothing downloaded.
+- **Infinite Loop Outro**: duplicate the opening seconds onto the end with a crossfade (and check the first/last frame seam) so the video restarts before the viewer notices.
+- **Brand Kit**: save your caption style and frame size/fps and re-apply it across uploads for instant feed recognition.
 
 **Media and project**
 - Import by drag and drop or the Media Browser (local folders). Thumbnails, waveforms, metadata, bins, search, labels, interpret footage, scene edit detection.

@@ -133,6 +133,12 @@ export function CaptionsPanel() {
             <HotText value={style.maxWidth * 100} min={20} max={100} step={1} unit="%" width={60} onChange={(v, c) => c && setStyle({ maxWidth: v / 100 })} />
             <span className="label">Letter spacing</span>
             <HotText value={style.letterSpacing} min={-5} max={30} step={0.5} unit=" px" width={60} onChange={(v, c) => c && setStyle({ letterSpacing: v })} />
+            <span className="label">Animation</span>
+            <Select value={style.animation ?? 'none'} options={[{ value: 'none', label: 'None' }, { value: 'pop', label: 'Pop' }, { value: 'slideUp', label: 'Slide up' }, { value: 'fade', label: 'Fade' }, { value: 'scale', label: 'Scale' }, { value: 'typewriter', label: 'Typewriter' }]} onChange={(v) => setStyle({ animation: v as any })} />
+            <span className="label">Kicker word</span>
+            <Checkbox checked={style.kicker ?? false} onChange={(v) => setStyle({ kicker: v })} title="Highlight the last word of each caption (or wrap a word in *asterisks* to choose it)" />
+            <span className="label">Kicker colour</span>
+            <ColorChip color={style.kickerColor ?? '#ffd54a'} onChange={(h, c) => c && setStyle({ kickerColor: h })} />
           </div>
           <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
             <Button sm onClick={() => setStyle({ ...DEFAULT_CAPTION_STYLE }, 'Reset caption style')}>Reset to default</Button>
