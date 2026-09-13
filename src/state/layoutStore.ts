@@ -24,7 +24,7 @@ export function presetLayout(ws: WorkspaceId): LayoutNode {
     case 'graphics':
       return split('row', [split('col', [g(['effectControls', 'source', 'project']), g(['effects', 'history'])], [0.55, 0.45]), split('col', [g(['program']), g(['timeline'])], [0.55, 0.45]), g(['essentialGraphics', 'captions'])], [0.26, 0.5, 0.24]);
     case 'retention':
-      return split('row', [split('col', [g(['project', 'mediaBrowser']), g(['captions', 'essentialGraphics'])], [0.5, 0.5]), split('col', [g(['program']), g(['timeline'])], [0.6, 0.4]), g(['effects', 'markers', 'history'])], [0.26, 0.5, 0.24]);
+      return split('row', [split('col', [g(['retention']), g(['project', 'mediaBrowser'])], [0.5, 0.5]), split('col', [g(['program']), g(['timeline'])], [0.7, 0.3]), split('col', [g(['captions', 'essentialGraphics']), g(['audioClipMixer', 'audioMeters'])], [0.58, 0.42])], [0.27, 0.49, 0.24]);
     case 'captions':
       return split('row', [split('col', [g(['captions']), g(['project', 'effects'])], [0.6, 0.4]), split('col', [g(['program', 'source']), g(['timeline'])], [0.55, 0.45]), g(['essentialGraphics', 'effectControls'])], [0.3, 0.48, 0.22]);
     case 'review':
@@ -188,6 +188,7 @@ const PANEL_HOME: Partial<Record<PanelId, PanelId[]>> = {
   libraries: ['project'],
   mediaBrowser: ['project'],
   storyboard: ['timeline', 'program'],
+  retention: ['captions', 'essentialGraphics'],
   learn: ['effectControls', 'project'],
   tools: ['project'],
   export: ['source', 'project'],
@@ -325,5 +326,6 @@ export const PANEL_TITLES: Record<PanelId, string> = {
   loudness: 'Loudness',
   mediaBrowser: 'Media Browser',
   storyboard: 'Storyboard',
+  retention: 'Retention',
   learn: 'Learn',
 };
