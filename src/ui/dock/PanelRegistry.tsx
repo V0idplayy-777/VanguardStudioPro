@@ -62,6 +62,7 @@ const REGISTRY: Record<PanelId, React.ComponentType> = {
   loudness: LoudnessPanel,
   mediaBrowser: MediaBrowserPanel,
   storyboard: StoryboardPanel,
+  retention: RetentionPanel,
   learn: LearnPanel,
 };
 
