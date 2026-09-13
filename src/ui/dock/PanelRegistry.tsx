@@ -16,6 +16,7 @@ import { CaptionsPanel, MarkersPanel, HistoryPanel, InfoPanel, MetadataPanel, Ev
 import { ExportPanel } from '../panels/ExportPanel';
 import { ToolsPanel, LibrariesPanel, MediaBrowserPanel } from '../panels/MiscPanels';
 import { StoryboardPanel } from '../panels/StoryboardPanel';
+import { RetentionPanel } from '../panels/RetentionPanel';
 
 class PanelBoundary extends React.Component<{ children: React.ReactNode; name: string }, { error: Error | null }> {
   state = { error: null as Error | null };
