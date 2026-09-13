@@ -30,6 +30,7 @@ export type PanelId =
   | 'loudness'
   | 'mediaBrowser'
   | 'storyboard'
+  | 'retention'
   | 'learn';
 
 export type WorkspaceId = 'editing' | 'assembly' | 'color' | 'effects' | 'audio' | 'graphics' | 'retention' | 'captions' | 'review' | 'export' | 'custom';
