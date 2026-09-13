@@ -13,6 +13,7 @@ import { EFFECTS } from '../engine/effects/registry';
 import { AUDIO_EFFECTS } from '../engine/effects/audioRegistry';
 import { usePalette } from './CommandPalette';
 import { useSettings } from '../state/settingsStore';
+import { retentionCmd } from '../app/retention';
 
 const WORKSPACES: { id: WorkspaceId; label: string }[] = [
   { id: 'assembly', label: 'Assembly' },
@@ -21,6 +22,7 @@ const WORKSPACES: { id: WorkspaceId; label: string }[] = [
   { id: 'effects', label: 'Effects' },
   { id: 'audio', label: 'Audio' },
   { id: 'graphics', label: 'Graphics' },
+  { id: 'retention', label: 'Retention' },
   { id: 'captions', label: 'Captions' },
   { id: 'review', label: 'Review' },
   { id: 'export', label: 'Export' },
@@ -272,6 +274,27 @@ export function MenuBar() {
         { separator: true },
         { label: 'Clear Selected Marker', onSelect: () => cmd.clearSelectedMarkers() },
         { label: 'Clear All Markers', danger: true, onSelect: () => cmd.clearAllMarkers() },
+      ],
+    },
+    {
+      title: 'Retention',
+      items: () => [
+        { label: 'Retention Check...', onSelect: () => retentionCmd.check() },
+        { label: 'Generate Smart Captions...', onSelect: () => retentionCmd.openSmartCaptions() },
+        { label: 'Apply Retention Caption Style', onSelect: () => retentionCmd.applyRetentionCaptionStyle() },
+        { separator: true },
+        { label: 'Auto Reset: Zoom Punches', onSelect: () => retentionCmd.zoomPunches() },
+        { label: 'Flash on Cuts', onSelect: () => retentionCmd.flashOnCuts() },
+        { separator: true },
+        { label: 'Insert Rewind Trap...', onSelect: () => retentionCmd.openRewindTrap() },
+        { label: 'Plant Comment Bait (Typo)', onSelect: () => retentionCmd.plantTypoBait() },
+        { separator: true },
+        { label: 'Music Bed to 5% (-26 dB)', onSelect: () => retentionCmd.applyMusicBed() },
+        { label: 'Dopamine Audio (SFX)...', onSelect: () => retentionCmd.openDopamine() },
+        { separator: true },
+        { label: 'Infinite Loop Outro...', onSelect: () => retentionCmd.openLoopOutro() },
+        { separator: true },
+        { label: 'Brand Kit...', onSelect: () => retentionCmd.openBrandKit() },
       ],
     },
     {

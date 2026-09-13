@@ -104,6 +104,7 @@ export const SHORTCUTS: ShortcutDef[] = [
   { id: 'workspaceFx', keys: 'Alt+Shift+3', label: 'Workspace: Effects', category: 'Window', run: () => useUI.getState().setWorkspace('effects') },
   { id: 'workspaceAudio', keys: 'Alt+Shift+4', label: 'Workspace: Audio', category: 'Window', run: () => useUI.getState().setWorkspace('audio') },
   { id: 'workspaceGfx', keys: 'Alt+Shift+5', label: 'Workspace: Graphics', category: 'Window', run: () => useUI.getState().setWorkspace('graphics') },
+  { id: 'workspaceRetention', keys: 'Alt+Shift+6', label: 'Workspace: Retention', category: 'Window', run: () => useUI.getState().setWorkspace('retention') },
   { id: 'toolSelect', keys: 'V', label: 'Selection tool', category: 'Tools', run: () => useUI.getState().setTool('select') },
   { id: 'toolTrack', keys: 'A', label: 'Track select forward (Shift+A backward)', category: 'Tools', run: () => useUI.getState().setTool('trackSelectFwd') },
   { id: 'toolTrackBack', keys: 'Shift+A', label: 'Track select backward', category: 'Tools', run: () => useUI.getState().setTool('trackSelectBack') },

@@ -206,7 +206,7 @@ function App() {
     applyDocumentSettings(s);
     useUI.setState({ programQuality: s.defaultProgramQuality });
     // Workspace at launch: a fixed one, or the last used (persisted below).
-    const valid: string[] = ['assembly', 'editing', 'color', 'effects', 'audio', 'graphics', 'captions', 'review', 'export'];
+    const valid: string[] = ['assembly', 'editing', 'color', 'effects', 'audio', 'graphics', 'retention', 'captions', 'review', 'export'];
     if (s.startupWorkspace === 'last') {
       const w = localStorage.getItem('vsp.lastWorkspace');
       if (w && valid.includes(w)) useUI.setState({ workspace: w as any });

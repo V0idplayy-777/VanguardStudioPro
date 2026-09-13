@@ -5,6 +5,7 @@ import { useProject, useActiveSequence } from '../state/projectStore';
 import { usePlayback } from '../engine/playback/playback';
 import { useLayout, PANEL_TITLES } from '../state/layoutStore';
 import { cmd } from '../app/commands';
+import { retentionCmd } from '../app/retention';
 import { shortcutFor } from '../app/shortcuts';
 import { EFFECTS, getEffectDef } from '../engine/effects/registry';
 import { AUDIO_EFFECTS } from '../engine/effects/audioRegistry';
@@ -134,6 +135,17 @@ function buildItems(): Item[] {
   C('magicMask', 'Magic Mask (AI Rotoscope)...', () => ui.openModal({ kind: 'magicMask' }), 'Effects', 'Track a person matte with no green screen');
   C('voiceCleanup', 'Clean Up Voice...', () => ui.openModal({ kind: 'voiceCleanup' }), 'Audio', 'Denoise, de-hum and level dialogue, baked per asset');
   C('saveTemplate', 'Save Selected Graphic as Template', () => cmd.saveGraphicAsTemplate(), 'Graphics', 'Snapshot a graphic clip into your motion graphics library');
+  C('retentionCheck', 'Retention Check', () => retentionCmd.check(), 'Retention', 'Score the sequence against the retention playbook and fix what fails');
+  C('smartCaptions', 'Generate Smart Captions...', () => retentionCmd.openSmartCaptions(), 'Retention', 'Bold, animated, centred micro-captions (1-3 words per line)');
+  C('retentionStyle', 'Apply Retention Caption Style', () => retentionCmd.applyRetentionCaptionStyle(), 'Retention', 'Bold centred animated captions with a kicker word');
+  C('zoomPunches', 'Auto Reset: Zoom Punches', () => retentionCmd.zoomPunches(), 'Retention', 'A subtle zoom reset every 2 seconds on static clips');
+  C('flashCuts', 'Flash on Cuts', () => retentionCmd.flashOnCuts(), 'Retention', 'White flash at every cut for a sensory reset');
+  C('rewindTrap', 'Insert Rewind Trap...', () => retentionCmd.openRewindTrap(), 'Retention', 'Hide a split-second meme or text easter egg in the corner');
+  C('typoBait', 'Plant Comment Bait (Typo)', () => retentionCmd.plantTypoBait(), 'Retention', 'Misspell one word so the comments correct you');
+  C('musicBed', 'Music Bed to 5% (-26 dB)', () => retentionCmd.applyMusicBed(), 'Retention', 'Drop the background track to ~5% volume');
+  C('dopamine', 'Dopamine Audio (SFX)...', () => retentionCmd.openDopamine(), 'Retention', 'Add synthesized pops, dings, swooshes on transitions');
+  C('loopOutro', 'Infinite Loop Outro...', () => retentionCmd.openLoopOutro(), 'Retention', 'Crossfade the ending back into the opening for a seamless loop');
+  C('brandKit', 'Brand Kit...', () => retentionCmd.openBrandKit(), 'Retention', 'Save and re-apply your font, colours and framing across uploads');
 
   /* Panels */
   for (const [pid, title] of Object.entries(PANEL_TITLES)) {

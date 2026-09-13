@@ -23,6 +23,8 @@ export function presetLayout(ws: WorkspaceId): LayoutNode {
       return split('row', [split('col', [g(['audioClipMixer', 'effectControls', 'source']), g(['project', 'effects'])], [0.5, 0.5]), split('col', [g(['audioMixer', 'program']), g(['timeline'])], [0.5, 0.5]), split('col', [g(['audioMeters']), g(['loudness', 'essentialGraphics'])], [0.6, 0.4])], [0.26, 0.6, 0.14]);
     case 'graphics':
       return split('row', [split('col', [g(['effectControls', 'source', 'project']), g(['effects', 'history'])], [0.55, 0.45]), split('col', [g(['program']), g(['timeline'])], [0.55, 0.45]), g(['essentialGraphics', 'captions'])], [0.26, 0.5, 0.24]);
+    case 'retention':
+      return split('row', [split('col', [g(['project', 'mediaBrowser']), g(['captions', 'essentialGraphics'])], [0.5, 0.5]), split('col', [g(['program']), g(['timeline'])], [0.6, 0.4]), g(['effects', 'markers', 'history'])], [0.26, 0.5, 0.24]);
     case 'captions':
       return split('row', [split('col', [g(['captions']), g(['project', 'effects'])], [0.6, 0.4]), split('col', [g(['program', 'source']), g(['timeline'])], [0.55, 0.45]), g(['essentialGraphics', 'effectControls'])], [0.3, 0.48, 0.22]);
     case 'review':

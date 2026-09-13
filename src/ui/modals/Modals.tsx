@@ -25,6 +25,7 @@ import { blankTextDocument, shapeLayer } from '../graphics/templates';
 import * as E from '../../engine/timeline/edits';
 import { evalNumber } from '../../engine/keyframes';
 import { ProxyManagerModal, TranscribeModal, MagicMaskModal, VoiceCleanupModal, ShortcutEditor } from './FeatureModals';
+import { RetentionCheckModal, SmartCaptionsModal, RewindTrapModal, DopamineModal, LoopOutroModal, BrandKitModal } from './RetentionModals';
 
 export const APP_VERSION = '1.1.0';
 export const BUILD_ID = '2026.09.07';
@@ -127,6 +128,18 @@ export function ModalHost() {
       return <MagicMaskModal {...props} />;
     case 'voiceCleanup':
       return <VoiceCleanupModal {...props} />;
+    case 'retentionCheck':
+      return <RetentionCheckModal {...props} />;
+    case 'smartCaptions':
+      return <SmartCaptionsModal {...props} />;
+    case 'rewindTrap':
+      return <RewindTrapModal {...props} />;
+    case 'dopamineAudio':
+      return <DopamineModal {...props} />;
+    case 'loopOutro':
+      return <LoopOutroModal {...props} />;
+    case 'brandKit':
+      return <BrandKitModal {...props} />;
     default:
       return null;
   }
@@ -1090,7 +1103,7 @@ function LabelPickerModal({ modal, close }: P) {
 }
 
 /* ---------- Workspace manager ---------- */
-const WS_LABELS: Record<WorkspaceId, string> = { editing: 'Editing', assembly: 'Assembly', color: 'Color', effects: 'Effects', audio: 'Audio', graphics: 'Graphics', captions: 'Captions', review: 'Review', export: 'Export', custom: 'Custom' };
+const WS_LABELS: Record<WorkspaceId, string> = { editing: 'Editing', assembly: 'Assembly', color: 'Color', effects: 'Effects', audio: 'Audio', graphics: 'Graphics', retention: 'Retention', captions: 'Captions', review: 'Review', export: 'Export', custom: 'Custom' };
 function WorkspaceManagerModal({ close }: P) {
   const workspace = useUI((s) => s.workspace);
   const setWorkspace = useUI((s) => s.setWorkspace);
@@ -1669,7 +1682,7 @@ function PreferencesModal({ modal, close }: P) {
               <div className="settings-section-title">Startup</div>
               {searchHit('startup workspace', 'launch layout') ? (
                 <Row label="Startup workspace" desc={SETTINGS_META.startupWorkspace.hint}>
-                  <Select value={st.startupWorkspace} options={[{ value: 'last', label: 'Last used' }, { value: 'assembly', label: 'Assembly' }, { value: 'editing', label: 'Editing' }, { value: 'color', label: 'Color' }, { value: 'effects', label: 'Effects' }, { value: 'audio', label: 'Audio' }, { value: 'graphics', label: 'Graphics' }, { value: 'captions', label: 'Captions' }, { value: 'review', label: 'Review' }, { value: 'export', label: 'Export' }]} onChange={(v) => st.set('startupWorkspace', v as any)} />
+                  <Select value={st.startupWorkspace} options={[{ value: 'last', label: 'Last used' }, { value: 'assembly', label: 'Assembly' }, { value: 'editing', label: 'Editing' }, { value: 'color', label: 'Color' }, { value: 'effects', label: 'Effects' }, { value: 'audio', label: 'Audio' }, { value: 'graphics', label: 'Graphics' }, { value: 'retention', label: 'Retention' }, { value: 'captions', label: 'Captions' }, { value: 'review', label: 'Review' }, { value: 'export', label: 'Export' }]} onChange={(v) => st.set('startupWorkspace', v as any)} />
                 </Row>
               ) : null}
               {searchHit('welcome', 'start screen') ? (

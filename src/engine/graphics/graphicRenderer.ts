@@ -338,42 +338,156 @@ export function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w
   ctx.closePath();
 }
 
-/** Draw a caption block with the given style. */
-export function renderCaption(ctx: CanvasRenderingContext2D, text: string, style: CaptionStyle, width: number, height: number) {
+/** Draw a caption block with the given style. `localFrame`/`fps` (optional) drive entry animations. */
+export function renderCaption(ctx: CanvasRenderingContext2D, text: string, style: CaptionStyle, width: number, height: number, localFrame = 0, fps = 30) {
   ctx.save();
   ctx.font = `${style.italic ? 'italic ' : ''}${style.fontWeight} ${style.fontSize}px "${style.fontFamily}", "Inter Variable", Inter, sans-serif`;
   ctx.letterSpacing = `${style.letterSpacing}px`;
   ctx.textBaseline = 'alphabetic';
   const maxW = width * style.maxWidth;
-  const lines = wrapText(ctx, text, maxW);
+
+  // Tokenise into words, keeping the `*kicker*` markup and per-line breaks.
+  const lines = tokenizeCaption(text, !!style.kicker);
+  const wrapped = wrapWordLines(ctx, lines, maxW);
+
+  // Entry animation progress 0..1 (a couple of frames).
+  const anim = style.animation ?? 'none';
+  const animFrames = anim === 'typewriter' ? Math.max(3, fps * 0.5) : Math.max(2, Math.round(fps * 0.12));
+  const p = localFrame <= 0 || anim === 'none' ? 1 : Math.min(1, localFrame / animFrames);
+  const easeOut = 1 - Math.pow(1 - p, 3);
+
+  // Typewriter budget: total visible characters across the whole caption.
+  const totalChars = wrapped.reduce((n, line) => n + line.reduce((m, w) => m + w.text.length + 1, 0), 0);
+  const charBudget = anim === 'typewriter' ? Math.ceil(totalChars * p) : Infinity;
+  let charsUsed = 0;
+
   const lh = style.fontSize * 1.25;
   const pad = style.fontSize * 0.3;
-  const blockH = lines.length * lh + pad;
+  const blockH = wrapped.length * lh + pad;
   const baseY = height * style.position - blockH;
-  lines.forEach((line, i) => {
-    const lw = ctx.measureText(line).width;
-    let x = (width - lw) / 2;
-    if (style.align === 'left') x = (width - maxW) / 2;
-    else if (style.align === 'right') x = (width + maxW) / 2 - lw;
-    const y = baseY + pad + (i + 1) * lh - lh * 0.25;
+
+  wrapped.forEach((words, i) => {
+    const lineText = words.map((w) => w.text).join(' ');
+    const lw = ctx.measureText(lineText).width;
+    let lineX = (width - lw) / 2;
+    if (style.align === 'left') lineX = (width - maxW) / 2;
+    else if (style.align === 'right') lineX = (width + maxW) / 2 - lw;
+    const lineY = baseY + pad + (i + 1) * lh - lh * 0.25;
+
+    // Animation transforms around the line centre.
+    let ax = 0,
+      ay = 0,
+      scale = 1,
+      alpha = 1;
+    if (anim === 'pop') {
+      scale = 0.6 + 0.4 * easeOut;
+      alpha = p;
+    } else if (anim === 'scale') {
+      scale = 0.85 + 0.15 * easeOut;
+      alpha = p;
+    } else if (anim === 'slideUp') {
+      ay = (1 - easeOut) * style.fontSize * 0.7;
+      alpha = p;
+    } else if (anim === 'fade') {
+      alpha = p;
+    }
+    const cx = lineX + lw / 2;
+    const cy = lineY - style.fontSize * 0.35;
+
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.scale(scale, scale);
+    ctx.translate(-cx, -cy);
+    ctx.translate(0, ay);
+    ctx.globalAlpha = alpha;
+
     if (style.backgroundOpacity > 0) {
       ctx.fillStyle = withAlpha(style.backgroundColor, style.backgroundOpacity);
-      ctx.fillRect(x - pad * 0.6, y - style.fontSize * 0.95, lw + pad * 1.2, lh);
+      ctx.fillRect(lineX - pad * 0.6, lineY - style.fontSize * 0.95, lw + pad * 1.2, lh);
     }
-    if (style.edge === 'shadow') {
-      ctx.shadowColor = style.edgeColor;
-      ctx.shadowBlur = style.fontSize * 0.15;
-      ctx.shadowOffsetX = style.fontSize * 0.04;
-      ctx.shadowOffsetY = style.fontSize * 0.04;
-    } else if (style.edge === 'outline' || style.edge === 'raised') {
-      ctx.lineJoin = 'round';
-      ctx.lineWidth = style.fontSize * (style.edge === 'raised' ? 0.06 : 0.12);
-      ctx.strokeStyle = style.edgeColor;
-      ctx.strokeText(line, x, y);
+
+    let x = lineX;
+    for (const w of words) {
+      if (anim === 'typewriter') {
+        charsUsed += w.text.length;
+        if (charsUsed > charBudget) break;
+      }
+      const ww = ctx.measureText(w.text).width;
+      if (style.edge === 'shadow') {
+        ctx.shadowColor = style.edgeColor;
+        ctx.shadowBlur = style.fontSize * 0.15;
+        ctx.shadowOffsetX = style.fontSize * 0.04;
+        ctx.shadowOffsetY = style.fontSize * 0.04;
+      } else if (style.edge === 'outline' || style.edge === 'raised') {
+        ctx.lineJoin = 'round';
+        ctx.lineWidth = style.fontSize * (style.edge === 'raised' ? 0.06 : 0.12);
+        ctx.strokeStyle = style.edgeColor;
+        ctx.strokeText(w.text, x, lineY);
+      }
+      ctx.fillStyle = w.kicker ? (style.kickerColor ?? '#ffd54a') : style.color;
+      ctx.fillText(w.text, x, lineY);
+      ctx.shadowColor = 'transparent';
+      x += ww + ctx.measureText(' ').width;
+      charsUsed += 1; // the separating space
     }
-    ctx.fillStyle = style.color;
-    ctx.fillText(line, x, y);
-    ctx.shadowColor = 'transparent';
+    ctx.restore();
   });
   ctx.restore();
+}
+
+interface CaptionWord {
+  text: string;
+  kicker: boolean;
+}
+
+/** Split caption text into words, honouring `*word*` kicker markup and hard line breaks. */
+function tokenizeCaption(text: string, autoKicker: boolean): CaptionWord[][] {
+  const raw = text.replace(/\r/g, '');
+  let explicit = false;
+  const out = raw.split('\n').map((line) =>
+    line
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((tok) => {
+        const m = tok.match(/^\*([^*]+)\*$/);
+        if (m) {
+          explicit = true;
+          return { text: m[1], kicker: true };
+        }
+        return { text: tok.replace(/\*/g, ''), kicker: false };
+      }),
+  );
+  if (!explicit && autoKicker) {
+    for (let li = out.length - 1; li >= 0; li--) {
+      if (out[li].length) {
+        out[li][out[li].length - 1].kicker = true;
+        break;
+      }
+    }
+  }
+  return out.filter((l) => l.length > 0);
+}
+
+/** Wrap tokenised lines of words to the maximum width. */
+function wrapWordLines(ctx: CanvasRenderingContext2D, lines: CaptionWord[][], maxW: number): CaptionWord[][] {
+  const spaceW = ctx.measureText(' ').width;
+  const out: CaptionWord[][] = [];
+  for (const line of lines) {
+    let cur: CaptionWord[] = [];
+    let curW = 0;
+    for (const w of line) {
+      const ww = ctx.measureText(w.text).width;
+      const sep = cur.length ? spaceW : 0;
+      if (cur.length && curW + sep + ww > maxW) {
+        out.push(cur);
+        cur = [w];
+        curW = ww;
+      } else {
+        cur.push(w);
+        curW += sep + ww;
+      }
+    }
+    if (cur.length) out.push(cur);
+  }
+  return out;
 }
