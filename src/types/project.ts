@@ -105,6 +105,13 @@ export interface MediaAsset {
     fps?: number;
     pixelAspect?: number;
     alpha?: 'straight' | 'premultiplied' | 'ignore';
+    /**
+     * Camera log profile the footage was recorded in. Applied as an input
+     * transform before any creative grade (see engine/color/lut.ts).
+     */
+    inputTransform?: string;
+    /** Id of an imported LUT applied on decode, before clip effects. */
+    inputLutId?: string;
   };
 }
 
@@ -257,6 +264,8 @@ export interface ClipMotion {
   antiFlicker: Param<number>;
 }
 
+export type FadeShape = 'linear' | 'equalPower' | 'exponential' | 'sCurve';
+
 export interface ClipAudio {
   /** Clip gain in dB (static, "Audio Gain" dialog). */
   gain: number;
@@ -268,7 +277,23 @@ export interface ClipAudio {
   invertPhase: boolean;
   /** Use the baked "cleaned" audio copy for this clip when one exists (Voice Cleanup). */
   enhanced?: boolean;
+  /** Clip fade-in, in frames. Dragged from the waveform fade handles. */
+  fadeIn?: number;
+  /** Clip fade-out, in frames. */
+  fadeOut?: number;
+  /** Curve applied to both fades. */
+  fadeShape?: FadeShape;
 }
+
+/**
+ * How intermediate frames are produced when a clip is re-timed (speed != 1)
+ * or when the sequence rate differs from the source rate.
+ *
+ *  - `nearest`      sample the closest source frame (fastest, can stutter)
+ *  - `blend`        cross-dissolve the two bracketing source frames
+ *  - `opticalFlow`  motion-compensated interpolation (see engine/time/opticalFlow)
+ */
+export type TimeInterpolation = 'nearest' | 'blend' | 'opticalFlow';
 
 export interface Clip {
   id: Id;
@@ -313,9 +338,66 @@ export interface Clip {
   audioChannel?: number;
   /** Extra per-clip note shown in Info panel. */
   comment?: string;
+  /** Retiming interpolation. Absent means `nearest` (the historical behaviour). */
+  timeInterpolation?: TimeInterpolation;
+  /** Set when this clip's media was produced by Render & Replace. */
+  renderReplace?: RenderReplaceInfo;
+  /** Point/planar track analyses attached to this clip (see engine/track/pointTracker). */
+  tracks?: TrackAnalysis[];
+}
+
+/** A clip whose media was baked by Render and Replace. */
+export interface RenderReplaceInfo {
+  /** Asset holding the baked render (kind 'video'). */
+  bakedAssetId: Id;
+  /** Asset the clip pointed at before the bake; Restore puts it back. */
+  originalAssetId: Id | null;
+  /** Original in point / speed so a restore is exact. */
+  originalInPoint: number;
+  originalSpeed: number;
+  at: number;
+  width: number;
+  height: number;
+  bytes: number;
+  /** Incremented each time the clip is re-rendered. */
+  generation: number;
+}
+
+/** One point/planar tracking analysis stored on a clip. */
+export interface TrackAnalysis {
+  id: Id;
+  name: string;
+  /** 'point' tracks a single feature, 'planar' tracks a four-corner patch. */
+  kind: 'point' | 'planar';
+  /** Seed positions, normalised 0..1 in the source frame. One entry for point, four for planar (tl,tr,br,bl). */
+  seed: [number, number][];
+  /** Tracked positions per analysed source frame, in the same order as `frames`. */
+  positions: [number, number][][];
+  /** Source frame indices that were analysed (sparse; interpolated between). */
+  frames: number[];
+  /** Per-frame match confidence 0..1. */
+  confidence: number[];
+  /** Source seconds the analysis covers. */
+  startSec: number;
+  endSec: number;
+  at: number;
+  /** Where the result was applied, so it can be re-applied or cleared. */
+  appliedTo?: { type: 'effect'; clipEffectId: Id; paramPrefix?: string } | { type: 'mask'; effectId: Id; maskId: Id } | { type: 'graphicLayer'; layerId: Id } | { type: 'cornerPin'; effectId: Id };
 }
 
 export type TrackKind = 'video' | 'audio' | 'caption';
+
+/** What a track is carrying. Drives the mix-to-target loudness balance. */
+export type TrackRole = 'dialogue' | 'voiceover' | 'music' | 'sfx' | 'ambience' | 'other';
+
+export const TRACK_ROLES: { id: TrackRole; label: string }[] = [
+  { id: 'dialogue', label: 'Dialogue' },
+  { id: 'voiceover', label: 'Voiceover' },
+  { id: 'music', label: 'Music' },
+  { id: 'sfx', label: 'SFX' },
+  { id: 'ambience', label: 'Ambience' },
+  { id: 'other', label: 'Other' },
+];
 
 export interface Track {
   id: Id;
@@ -338,6 +420,8 @@ export interface Track {
   showKeyframes: 'clip' | 'track' | 'none';
   /** Audio: send to submix id (reserved). */
   output: 'master' | Id;
+  /** Audio: what this track carries, used by Mix to Target. */
+  role?: TrackRole;
   /** Caption track: style. */
   captionStyle?: CaptionStyle;
   /** Whether the track is expanded (tall) in the UI. */
@@ -372,6 +456,21 @@ export interface CaptionItem {
   text: string;
   /** Optional per item style override. */
   style?: Partial<CaptionStyle>;
+  /**
+   * Per-word timings in frames, relative to the sequence (not the caption),
+   * aligned with the words of `text` in order. Present when the caption came
+   * from a word-level transcript; drives the karaoke highlight.
+   */
+  words?: CaptionWord[];
+}
+
+/** One spoken word with its timeline span, in frames. */
+export interface CaptionWord {
+  /** Sequence frame the word starts. */
+  t0: number;
+  /** Sequence frame the word ends. */
+  t1: number;
+  text: string;
 }
 
 export type CaptionAnimation = 'none' | 'pop' | 'slideUp' | 'fade' | 'scale' | 'typewriter';
@@ -397,6 +496,12 @@ export interface CaptionStyle {
   kicker?: boolean;
   /** Colour of the highlighted (kicker) word. */
   kickerColor?: string;
+  /**
+   * Word-by-word highlight driven by transcript timings: words already spoken
+   * are painted in `karaokeColor`. Needs CaptionItem.words to do anything.
+   */
+  karaoke?: boolean;
+  karaokeColor?: string;
 }
 
 export interface SequenceSettings {
@@ -414,6 +519,49 @@ export interface SequenceSettings {
   maxBitDepth: boolean;
   maxRenderQuality: boolean;
   workingColorSpace?: string;
+  /** Delivery target; drives the Program monitor safe-area guides. */
+  deliveryPlatform?: PlatformId;
+}
+
+/* ---------- platform safe areas ---------- */
+
+export type PlatformId = 'none' | 'tiktok' | 'reels' | 'shorts' | 'instagramPost' | 'facebook' | 'youtube' | 'twitter' | 'linkedin' | 'broadcast' | 'cinema';
+
+/**
+ * Regions a platform's own chrome covers, in normalised frame coordinates.
+ * `top`/`bottom` are heights, `left`/`right` are widths, all 0..1 of the frame.
+ * Anything important should stay inside the remaining rectangle.
+ */
+export interface PlatformSafeArea {
+  id: PlatformId;
+  label: string;
+  /** Aspect ratio the platform displays at, for reference. */
+  aspect: string;
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+  /** Where the platform puts its caption/description text (a hint region). */
+  captionZone: { x: number; y: number; w: number; h: number };
+  note: string;
+}
+
+export const PLATFORM_SAFE_AREAS: PlatformSafeArea[] = [
+  { id: 'none', label: 'Off', aspect: '-', top: 0, bottom: 0, left: 0, right: 0, captionZone: { x: 0.1, y: 0.75, w: 0.8, h: 0.15 }, note: 'No guides.' },
+  { id: 'tiktok', label: 'TikTok', aspect: '9:16', top: 0.12, bottom: 0.16, left: 0.0, right: 0.14, captionZone: { x: 0.06, y: 0.7, w: 0.72, h: 0.12 }, note: 'Right-hand action rail (like/comment/share/profile) and the bottom caption + music ticker. Keep faces and text left of the rail.' },
+  { id: 'reels', label: 'Instagram Reels', aspect: '9:16', top: 0.11, bottom: 0.19, left: 0.0, right: 0.13, captionZone: { x: 0.06, y: 0.66, w: 0.74, h: 0.12 }, note: 'Right rail plus a taller bottom stack: handle, caption, audio, and the progress bar.' },
+  { id: 'shorts', label: 'YouTube Shorts', aspect: '9:16', top: 0.1, bottom: 0.2, left: 0.0, right: 0.12, captionZone: { x: 0.06, y: 0.64, w: 0.76, h: 0.12 }, note: 'The deepest bottom reserve of the three - title, channel row and buttons all live there.' },
+  { id: 'instagramPost', label: 'Instagram Feed 4:5', aspect: '4:5', top: 0.09, bottom: 0.11, left: 0.0, right: 0.0, captionZone: { x: 0.1, y: 0.72, w: 0.8, h: 0.14 }, note: 'Feed posts crop 4:5; header and action row overlay top and bottom.' },
+  { id: 'facebook', label: 'Facebook Feed', aspect: '16:9', top: 0.07, bottom: 0.1, left: 0.0, right: 0.0, captionZone: { x: 0.1, y: 0.74, w: 0.8, h: 0.14 }, note: 'Reactions row along the bottom, page header at the top.' },
+  { id: 'youtube', label: 'YouTube (16:9)', aspect: '16:9', top: 0.0, bottom: 0.13, left: 0.0, right: 0.0, captionZone: { x: 0.1, y: 0.72, w: 0.8, h: 0.14 }, note: 'Player chrome covers the bottom in fullscreen-off mode; titles and the seek bar sit there.' },
+  { id: 'twitter', label: 'X / Twitter', aspect: '16:9', top: 0.0, bottom: 0.09, left: 0.0, right: 0.0, captionZone: { x: 0.1, y: 0.76, w: 0.8, h: 0.13 }, note: 'Thin bottom bar with the action row.' },
+  { id: 'linkedin', label: 'LinkedIn', aspect: '16:9', top: 0.0, bottom: 0.08, left: 0.0, right: 0.0, captionZone: { x: 0.1, y: 0.77, w: 0.8, h: 0.13 }, note: 'Minimal chrome; keep a little bottom margin for the control bar.' },
+  { id: 'broadcast', label: 'Broadcast (title/action safe)', aspect: '16:9', top: 0.1, bottom: 0.1, left: 0.1, right: 0.1, captionZone: { x: 0.1, y: 0.72, w: 0.8, h: 0.16 }, note: 'SMPTE-style: outer 10% is action safe, inner 20% is title safe. Overscan can crop the outer ring.' },
+  { id: 'cinema', label: 'Cinema 2.39:1', aspect: '2.39:1', top: 0.125, bottom: 0.125, left: 0.0, right: 0.0, captionZone: { x: 0.1, y: 0.7, w: 0.8, h: 0.12 }, note: 'Letterboxed scope mattes; keeps everything inside the projected aperture.' },
+];
+
+export function platformSafeArea(id: PlatformId | undefined): PlatformSafeArea {
+  return PLATFORM_SAFE_AREAS.find((p) => p.id === id) ?? PLATFORM_SAFE_AREAS[0];
 }
 
 export interface Sequence {
@@ -439,6 +587,59 @@ export interface Sequence {
   binId: Id | null;
   createdAt: number;
   modifiedAt: number;
+  /** Speech transcript used by text-based editing and karaoke captions. */
+  transcript?: Transcript;
+  /** Present when this sequence is a multicam angle stack. */
+  multicam?: MulticamData;
+}
+
+/* ---------- transcript (text-based editing) ---------- */
+
+/** One spoken word located on the timeline. */
+export interface TranscriptWord {
+  /** Sequence frames. */
+  t0: number;
+  t1: number;
+  text: string;
+  /** Confidence 0..1 when the recogniser supplied one. */
+  confidence?: number;
+  /** Id of the clip that was on a targeted video track at this word, if any. */
+  clipId?: Id;
+}
+
+export interface Transcript {
+  /** Recogniser model / source description. */
+  source: string;
+  at: number;
+  /** Language as reported (or requested). */
+  language?: string;
+  words: TranscriptWord[];
+  /** Frame range the transcript was produced from. */
+  startFrame: number;
+  endFrame: number;
+}
+
+/* ---------- multicam ---------- */
+
+export interface MulticamAngle {
+  id: Id;
+  name: string;
+  /** Video track in this sequence carrying the angle. */
+  trackId: Id;
+  assetId: Id | null;
+  /** Optional colour for the angle badge. */
+  label?: LabelColor;
+}
+
+export interface MulticamData {
+  angles: MulticamAngle[];
+  /** Which angle supplies program audio. */
+  audioAngleId: Id;
+  /** Cut points: from `frame` onward this angle is live. Sorted ascending. */
+  switches: { frame: number; angleId: Id }[];
+  /** How the angles were aligned. */
+  syncMethod: 'audio' | 'inPoint' | 'manual' | 'timecode';
+  createdAt: number;
 }
 
 /* ---------- graphics (titles) ---------- */
@@ -601,6 +802,8 @@ export const DEFAULT_CAPTION_STYLE: CaptionStyle = {
   animation: 'none',
   kicker: false,
   kickerColor: '#ffd54a',
+  karaoke: false,
+  karaokeColor: '#ffd54a',
 };
 
 export const DEFAULT_SEQUENCE_SETTINGS: SequenceSettings = {

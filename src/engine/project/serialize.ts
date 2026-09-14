@@ -1,5 +1,5 @@
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate';
-import type { Project, MediaAsset } from '../../types/project';
+import { DEFAULT_CAPTION_STYLE, type Project, type MediaAsset } from '../../types/project';
 import { useProject } from '../../state/projectStore';
 import { loadMediaBlob, persistMediaBlob, saveProjectAutosave, loadProjectAutosave, clearProjectAutosave } from '../media/mediaDb';
 import { registerMedia, hasMedia, getMedia } from '../media/mediaStore';
@@ -8,7 +8,7 @@ import { download, sanitizeFilename } from '../util';
 import { logEvent, toast } from '../../state/uiStore';
 
 export const PROJECT_EXT = 'vsproj';
-export const PROJECT_FORMAT_VERSION = 3;
+export const PROJECT_FORMAT_VERSION = 4;
 
 interface ProjectFileJson {
   format: 'vanguard-studio-pro';
@@ -45,6 +45,32 @@ function migrate(p: Project, from: number): Project {
   }
   if (from < 3) {
     for (const s of p.sequences) for (const c of s.clips) c.markers ??= [];
+  }
+  if (from < 4) {
+    // Fades, retiming interpolation, track roles, karaoke captions and the
+    // transcript/multicam documents all arrived in v4. Every field is optional
+    // so older projects simply keep behaving as before; fill the ones that are
+    // read unconditionally.
+    for (const s of p.sequences) {
+      s.captionTrack ??= { enabled: true, burnIn: false, style: { ...DEFAULT_CAPTION_STYLE }, name: 'Captions' };
+      s.captionTrack.style = { ...DEFAULT_CAPTION_STYLE, ...s.captionTrack.style };
+      s.settings.deliveryPlatform ??= 'none';
+      for (const t of s.tracks) {
+        if (t.kind === 'audio') t.role ??= 'other';
+      }
+      for (const c of s.clips) {
+        c.audio.fadeIn ??= 0;
+        c.audio.fadeOut ??= 0;
+        c.audio.fadeShape ??= 'equalPower';
+        c.timeInterpolation ??= 'nearest';
+      }
+      for (const cap of s.captions ?? []) cap.words ??= undefined;
+    }
+    for (const a of p.assets) {
+      if (a.interpret) {
+        a.interpret.inputTransform ??= 'none';
+      }
+    }
   }
   return p;
 }

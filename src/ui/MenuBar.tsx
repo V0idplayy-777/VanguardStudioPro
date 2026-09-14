@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useUI, type ContextMenuItem, type WorkspaceId, type PanelId } from '../state/uiStore';
+import { useUI, toast, type ContextMenuItem, type WorkspaceId, type PanelId } from '../state/uiStore';
 import { useProject } from '../state/projectStore';
 import { usePlayback } from '../engine/playback/playback';
 import { cmd, selectedClipIds } from '../app/commands';
@@ -7,7 +7,7 @@ import { shortcutFor } from '../app/shortcuts';
 import { MenuList } from './controls';
 import { Icon } from './icons';
 import { useLayout, PANEL_TITLES } from '../state/layoutStore';
-import { LABEL_COLORS, type LabelColor } from '../types/project';
+import { LABEL_COLORS, type LabelColor, type TimeInterpolation } from '../types/project';
 import { TRANSITIONS, AUDIO_TRANSITIONS } from '../engine/effects/transitions';
 import { EFFECTS } from '../engine/effects/registry';
 import { AUDIO_EFFECTS } from '../engine/effects/audioRegistry';
@@ -173,6 +173,14 @@ export function MenuBar() {
             { label: 'Frame Hold (toggle at playhead)', shortcut: sc('frameHold'), onSelect: () => cmd.frameHold() },
             { label: 'Insert Frame Hold Segment', onSelect: () => cmd.insertFrameHoldSegment() },
             { label: 'Time Remapping...', onSelect: () => openModal({ kind: 'timeRemap' }) },
+            {
+              label: 'Slow Motion Frame Blending',
+              submenu: [
+                { label: 'Off (repeat source frames)', checked: interpMode() === 'nearest', onSelect: () => setInterpMode('nearest') },
+                { label: 'Blend (cross-dissolve)', checked: interpMode() === 'blend', onSelect: () => setInterpMode('blend') },
+                { label: 'Optical Flow (smoothest)', checked: interpMode() === 'opticalFlow', onSelect: () => setInterpMode('opticalFlow') },
+              ],
+            },
             { separator: true },
             { label: 'Scale to Frame Size', onSelect: () => scaleToFrame('fit') },
             { label: 'Set to Frame Size', onSelect: () => scaleToFrame('fill') },
@@ -200,10 +208,12 @@ export function MenuBar() {
         { label: 'Speed / Duration...', shortcut: sc('speed'), disabled: !hasSel, onSelect: () => cmd.speedDuration() },
         { label: 'Scene Edit Detection...', disabled: !hasSel, onSelect: () => openModal({ kind: 'sceneDetect' }) },
         { label: 'Auto Color', disabled: !hasSel, onSelect: () => void cmd.autoColorSelection() },
+        { label: 'Colour LUT Manager...', onSelect: () => openModal({ kind: 'lutManager' }) },
         { label: 'Green Screen Key (Chroma)...', disabled: !hasSel, onSelect: () => openModal({ kind: 'greenScreen' }) },
         { label: 'Magic Mask (AI Rotoscope)...', shortcut: sc('magicMask'), disabled: !hasSel, onSelect: () => openModal({ kind: 'magicMask' }) },
         { label: 'Pan & Zoom (Ken Burns)...', disabled: !hasSel, onSelect: () => openModal({ kind: 'kenBurns' }) },
         { label: 'Stabilize (Warp Stabilizer)...', onSelect: () => openModal({ kind: 'stabilize' }) },
+        { label: 'Track Motion (Pin Text / Blur)...', shortcut: sc('tracker'), onSelect: () => openModal({ kind: 'tracker' }) },
         { label: 'Normalize Audio (-14 LUFS)', disabled: !hasSel, onSelect: () => void cmd.normalizeAudio() },
         { label: 'Remove Silence...', disabled: !hasSel, onSelect: () => openModal({ kind: 'removeSilence' }) },
         { label: 'Clean Up Voice...', shortcut: sc('voiceCleanup'), disabled: !hasSel, onSelect: () => openModal({ kind: 'voiceCleanup' }) },
@@ -429,6 +439,57 @@ function resetMotion() {
       c.motion.opacity = { value: 100 };
     }
   });
+}
+
+/**
+ * Retiming interpolation for the selected video clips.
+ *
+ * Exposed as "Slow Motion Frame Blending" because that is what it does for the
+ * person using it: when a clip is slowed down or the sequence rate differs from
+ * the source rate, the timeline has to invent frames that do not exist. `nearest`
+ * repeats a source frame (strobey), `blend` dissolves between the two bracketing
+ * frames (soft), and `opticalFlow` warps them along estimated motion (smoothest,
+ * costs a background pass per frame pair).
+ *
+ * Reports the mode only when every selected clip agrees, so the menu cannot show
+ * a checkmark that would be a lie for a mixed selection.
+ */
+function interpMode(): TimeInterpolation | null {
+  const ids = selectedClipIds();
+  const p = useProject.getState().project;
+  const seq = p.sequences.find((s) => s.id === p.activeSequenceId);
+  if (!seq || !ids.length) return null;
+  let mode: TimeInterpolation | null = null;
+  for (const c of seq.clips) {
+    if (!ids.includes(c.id)) continue;
+    if (seq.tracks.find((t) => t.id === c.trackId)?.kind !== 'video') continue;
+    const m = c.timeInterpolation ?? 'nearest';
+    if (mode === null) mode = m;
+    else if (mode !== m) return null;
+  }
+  return mode;
+}
+
+function setInterpMode(mode: TimeInterpolation) {
+  const ids = selectedClipIds();
+  const label = mode === 'opticalFlow' ? 'Optical Flow' : mode === 'blend' ? 'Frame Blending' : 'No frame blending';
+  useProject.getState().update(`${label} on ${ids.length} clip(s)`, (p) => {
+    const seq = p.sequences.find((s) => s.id === p.activeSequenceId);
+    if (!seq) return;
+    for (const c of seq.clips) {
+      if (!ids.includes(c.id)) continue;
+      if (seq.tracks.find((t) => t.id === c.trackId)?.kind !== 'video') continue;
+      if (mode === 'nearest') delete c.timeInterpolation;
+      else c.timeInterpolation = mode;
+    }
+  });
+  if (mode === 'opticalFlow') {
+    toast(
+      'info',
+      'Optical Flow enabled',
+      'Motion is analysed in the background the first time each frame pair is needed, so playback may fall back to blending for a moment while it catches up.',
+    );
+  }
 }
 
 function setAudioProp(key: 'muted' | 'invertPhase' | 'channelMode', value: any) {

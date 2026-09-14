@@ -16,6 +16,22 @@ import { useSettings } from '../../state/settingsStore';
 
 const CHANNEL_INDEX: Record<string, number> = { rgb: 0, alpha: 1, r: 2, g: 3, b: 4, luma: 5 };
 
+/**
+ * Exposure monitoring aids.
+ *
+ * Labels are written for someone who has never heard the broadcast terms: the
+ * jargon is in brackets so it is still findable, but the plain description comes
+ * first. These only ever affect what the Program Monitor shows - the compositor's
+ * readback path presents with display mode 'none', so nothing here can be baked
+ * into an export, a scope or a thumbnail.
+ */
+const DISPLAY_MODES: { id: 'none' | 'falseColor' | 'zebra' | 'both'; label: string; hint: string }[] = [
+  { id: 'none', label: 'Off (normal picture)', hint: 'Show the image as it will look in the final export.' },
+  { id: 'falseColor', label: 'Exposure map (false colour)', hint: 'Recolour the image by brightness. Green is correctly exposed middle gray, red and pink are too bright, blue and indigo are too dark.' },
+  { id: 'zebra', label: 'Clipping warnings (zebras)', hint: 'Hatch over areas that are blown out to pure white or crushed to pure black, where detail is gone for good.' },
+  { id: 'both', label: 'Both overlaid', hint: 'Exposure map with the clipping hatch on top.' },
+];
+
 export function ProgramMonitor() {
   const seq = useActiveSequence();
   const project = useProject((s) => s.project);
@@ -31,6 +47,10 @@ export function ProgramMonitor() {
   const ui = useUI();
   const dropped = usePlayback((s) => s.droppedFrames);
   const showPerf = useSettings((s) => s.showFpsOverlay);
+  const zebraHi = useSettings((s) => s.zebraHigh);
+  const zebraLo = useSettings((s) => s.zebraLow);
+  const displayMode = useUI((s) => s.displayMode);
+  const setDisplayMode = useUI((s) => s.setDisplayMode);
   const [wrapRef, size] = useElementSize<HTMLDivElement>();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
@@ -71,8 +91,8 @@ export function ProgramMonitor() {
       cv.width = pw;
       cv.height = ph;
     }
-    presentTo(cv, { channel: CHANNEL_INDEX[ui.programChannel], checker: ui.transparencyGrid, bg: [0, 0, 0] });
-  }, [frameVersion, geom, seq?.id, ui.programChannel, ui.transparencyGrid]);
+    presentTo(cv, { channel: CHANNEL_INDEX[ui.programChannel], checker: ui.transparencyGrid, bg: [0, 0, 0], display: displayMode, zebraHi, zebraLo });
+  }, [frameVersion, geom, seq?.id, ui.programChannel, ui.transparencyGrid, displayMode, zebraHi, zebraLo]);
 
   useEffect(() => {
     scheduleRender(true);
@@ -201,6 +221,11 @@ export function ProgramMonitor() {
       { label: 'Display Mode', submenu: (['rgb', 'alpha', 'r', 'g', 'b', 'luma'] as const).map((c) => ({ label: { rgb: 'Composite (RGB)', alpha: 'Alpha', r: 'Red channel', g: 'Green channel', b: 'Blue channel', luma: 'Luma' }[c], checked: ui.programChannel === c, onSelect: () => ui.setProgramChannel(c) })) },
       { label: 'Transparency Grid', checked: ui.transparencyGrid, onSelect: () => ui.setTransparencyGrid(!ui.transparencyGrid) },
       { separator: true },
+      {
+        label: 'Exposure Aids',
+        submenu: DISPLAY_MODES.map((m) => ({ label: m.label, checked: displayMode === m.id, onSelect: () => setDisplayMode(m.id) })),
+      },
+      { separator: true },
       { label: 'Safe Margins', checked: ui.programOverlay.includes('safeMargins'), onSelect: () => ui.toggleProgramOverlay('safeMargins') },
       { label: 'Rule of Thirds Grid', checked: ui.programOverlay.includes('grid'), onSelect: () => ui.toggleProgramOverlay('grid') },
       { label: 'Rulers', checked: ui.programOverlay.includes('rulers'), onSelect: () => ui.toggleProgramOverlay('rulers') },
@@ -231,8 +256,23 @@ export function ProgramMonitor() {
         <IconButton icon="safeMargins" label="Safe margins" sm on={ui.programOverlay.includes('safeMargins')} onClick={() => ui.toggleProgramOverlay('safeMargins')} />
         <IconButton icon="grid" label="Grid" sm on={ui.programOverlay.includes('grid')} onClick={() => ui.toggleProgramOverlay('grid')} />
         <IconButton icon="transparent" label="Transparency grid" sm on={ui.transparencyGrid} onClick={() => ui.setTransparencyGrid(!ui.transparencyGrid)} />
+        <IconButton
+          icon="contrast"
+          label="Exposure map (false colour) - recolours the image by brightness so you can see what is correctly exposed"
+          sm
+          on={displayMode === 'falseColor' || displayMode === 'both'}
+          onClick={() => setDisplayMode(displayMode === 'falseColor' ? 'none' : displayMode === 'both' ? 'zebra' : 'falseColor')}
+        />
+        <IconButton
+          icon="warning"
+          label="Clipping warnings (zebras) - hatches over blown highlights and crushed shadows"
+          sm
+          on={displayMode === 'zebra' || displayMode === 'both'}
+          onClick={() => setDisplayMode(displayMode === 'zebra' ? 'none' : displayMode === 'both' ? 'falseColor' : 'zebra')}
+        />
         <MenuButton icon="settings" label="Monitor settings" className="ibtn sm" items={() => [
           { label: 'Display Mode', submenu: (['rgb', 'alpha', 'r', 'g', 'b', 'luma'] as const).map((c) => ({ label: { rgb: 'Composite (RGB)', alpha: 'Alpha', r: 'Red', g: 'Green', b: 'Blue', luma: 'Luma' }[c], checked: ui.programChannel === c, onSelect: () => ui.setProgramChannel(c) })) },
+          { label: 'Exposure Aids', submenu: DISPLAY_MODES.map((m) => ({ label: m.label, checked: displayMode === m.id, onSelect: () => setDisplayMode(m.id) })) },
           { label: 'Rulers', checked: ui.programOverlay.includes('rulers'), onSelect: () => ui.toggleProgramOverlay('rulers') },
           { separator: true },
           { label: `Render ${renderMs.toFixed(1)} ms / frame`, disabled: true },

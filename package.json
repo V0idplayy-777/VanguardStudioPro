@@ -9,7 +9,12 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 0.0.0.0 --port 4173",
     "typecheck": "tsc --noEmit",
-    "test:maths": "esbuild tests/engine-maths.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/engine-maths.mjs && node node_modules/.cache/engine-maths.mjs"
+    "test:maths": "esbuild tests/engine-maths.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/engine-maths.mjs && node node_modules/.cache/engine-maths.mjs",
+    "test:luts": "esbuild tests/lut-maths.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/lut-maths.mjs && node node_modules/.cache/lut-maths.mjs",
+    "test:gl": "esbuild tests/gl-maths.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/gl-maths.mjs && node node_modules/.cache/gl-maths.mjs",
+    "test:tracker": "esbuild tests/tracker-maths.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/tracker-maths.mjs && node node_modules/.cache/tracker-maths.mjs",
+    "test:shaders": "esbuild tests/shader-lint.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/shader-lint.mjs && node node_modules/.cache/shader-lint.mjs",
+    "test:all": "npm run test:maths && npm run test:luts && npm run test:gl && npm run test:tracker && npm run test:shaders"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.2.5",
@@ -27,6 +32,7 @@
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^5.1.0",
+    "esbuild": "^0.28.2",
     "typescript": "^5.9.2",
     "vite": "^7.1.0"
   }

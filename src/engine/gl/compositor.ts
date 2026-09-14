@@ -1,7 +1,7 @@
 import type { Clip, EffectInstance, EffectMask, MediaAsset, Project, Sequence, Track, BlendMode } from '../../types/project';
 import { BLEND_MODES } from '../../types/project';
 import { GLCore, type RenderTarget } from './glcore';
-import { BARS_FRAG, BLEND_FRAG, COPY_FRAG, MASK_MIX_FRAG, MOTION_FRAG, PRESENT_FRAG, SHAPE_MASK_FRAG, SOLID_FRAG, buildEffectFrag, buildTransitionFrag } from './shaders';
+import { BARS_FRAG, BLEND_FRAG, COPY_FRAG, FLOW_FRAG, LERP_FRAG, MASK_MIX_FRAG, MOTION_FRAG, PRESENT_FRAG, SHAPE_MASK_FRAG, SOLID_FRAG, buildEffectFrag, buildTransitionFrag } from './shaders';
 import { EFFECT_MAP } from '../effects/registry';
 import { TRANSITION_MAP } from '../effects/transitions';
 import { evalParam } from '../keyframes';
@@ -11,6 +11,9 @@ import { clipEnd, sourceTimeAt, transitionAtCut, transitionRange } from '../time
 import { renderCaption, renderGraphic } from '../graphics/graphicRenderer';
 import { hexToRgb } from '../util';
 import { settings } from '../../state/settingsStore';
+import { getLutSync, preloadLut, identityLut, type Lut3D } from '../color/lut';
+import { getFlow, requestFlow } from '../time/opticalFlow';
+import type { VideoSource } from '../media/mediaStore';
 
 /*
   Frame compositor.
@@ -45,6 +48,13 @@ const blendIndex: Record<BlendMode, number> = Object.fromEntries(BLEND_MODES.map
 /** Effects that strobe or flash - blocked by the accessibility setting. */
 const FLASHING_EFFECTS = new Set(['strobe']);
 
+/** Effects that need the previous rendered frame of the same owner bound to u_prev. */
+const PREV_FRAME_EFFECTS = new Set(['echo', 'motionBlur']);
+
+/** How the Program monitor should present a frame. Monitoring only; never exported. */
+export type DisplayMode = 'none' | 'falseColor' | 'zebra' | 'both';
+const DISPLAY_INDEX: Record<DisplayMode, number> = { none: 0, falseColor: 1, zebra: 2, both: 3 };
+
 interface TexCacheEntry {
   tex: WebGLTexture;
   key: string;
@@ -67,6 +77,10 @@ export class Compositor {
   private whiteMaskTex: WebGLTexture;
   /** Uploaded Magic Mask mattes, keyed by track id. */
   private magicTexCache = new Map<string, { tex: WebGLTexture; key: string; w: number; h: number; rgba: Uint8ClampedArray<ArrayBuffer> }>();
+  /** Uploaded 3D LUT volumes, keyed by LUT id. Rebuilt only when the data changes. */
+  private lutTexCache = new Map<string, { tex: WebGLTexture; size: number; ref: Lut3D }>();
+  private identityLutTex: WebGLTexture | null = null;
+  private flowTexCache = new Map<string, { tex: WebGLTexture; key: string }>();
   frameCounter = 0;
   /** Hysteresis counter for shrinking the present canvas. */
   private smallPresents = 0;
@@ -219,6 +233,36 @@ export class Compositor {
         srcTime = Math.floor(srcTime * pfps) / pfps;
       }
       srcTime = Math.max(0, Math.min((asset.duration ?? src.duration) - 1e-3, srcTime));
+
+      // Retiming interpolation. When the playhead lands between two source
+      // frames, `nearest` snaps to one of them and slow motion strobes. `blend`
+      // dissolves the pair; `opticalFlow` warps them along estimated motion so
+      // the in-between frame looks like it was actually shot.
+      const interp = clip.timeInterpolation ?? 'nearest';
+      if (interp !== 'nearest') {
+        const sfps = src.fps || asset.fps || fps;
+        if (sfps > 0) {
+          const exact = srcTime * sfps;
+          const i0 = Math.floor(exact);
+          const frac = exact - i0;
+          // Only interpolate genuinely fractional times: at an exact source frame
+          // warping or dissolving would just soften a frame we already have.
+          if (frac > 0.004 && frac < 0.996) {
+            const t0 = i0 / sfps;
+            const t1 = (i0 + 1) / sfps;
+            if (interp === 'opticalFlow') {
+              const warped = await this.renderFlowInterp(src, asset, clip, t0, t1, frac);
+              if (warped) return warped;
+              // Flow still computing (or unavailable): dissolve for this paint.
+              // renderFlowInterp flagged the frame incomplete, so playback will
+              // re-render once the vectors arrive.
+            }
+            const dissolved = await this.renderBlendInterp(src, clip, t0, t1, frac);
+            if (dissolved) return dissolved;
+          }
+        }
+      }
+
       const img = await src.getFrame(srcTime);
       if (!img) {
         this.lastFrameIncomplete = true;
@@ -242,6 +286,145 @@ export class Compositor {
       return { tex, width: w, height: h };
     }
     return null;
+  }
+
+  /* ---------- retiming interpolation ---------- */
+
+  /** Scratch canvas for pulling low-res ImageData out of a decoded frame. */
+  private flowCanvas = document.createElement('canvas');
+  private flowCtx = this.flowCanvas.getContext('2d', { willReadFrequently: true })!;
+
+  /**
+   * Rasterise a decoded frame to a small ImageData for CPU analysis.
+   * Kept deliberately low resolution: the flow grid is ~48x27 cells, so anything
+   * larger is wasted work. VideoFrame is closed by the caller's decode cache,
+   * so this only reads from it.
+   */
+  private frameToImageData(frame: TexImageSource | VideoFrame, maxW = 384): ImageData | null {
+    const w = 'displayWidth' in frame ? frame.displayWidth : (frame as any).width ?? 0;
+    const h = 'displayHeight' in frame ? frame.displayHeight : (frame as any).height ?? 0;
+    if (!w || !h) return null;
+    const scale = Math.min(1, maxW / w);
+    const cw = Math.max(2, Math.round(w * scale));
+    const ch = Math.max(2, Math.round(h * scale));
+    if (this.flowCanvas.width !== cw || this.flowCanvas.height !== ch) {
+      this.flowCanvas.width = cw;
+      this.flowCanvas.height = ch;
+    }
+    this.flowCtx.clearRect(0, 0, cw, ch);
+    this.flowCtx.drawImage(frame as CanvasImageSource, 0, 0, cw, ch);
+    try {
+      return this.flowCtx.getImageData(0, 0, cw, ch);
+    } catch {
+      return null;
+    }
+  }
+
+  /** Aspect-aware flow grid: ~48 cells across, cell shape kept near square. */
+  private flowGrid(w: number, h: number): { gw: number; gh: number } {
+    const gw = 48;
+    const gh = Math.max(8, Math.round((gw * h) / Math.max(1, w)));
+    return { gw, gh };
+  }
+
+  /**
+   * Warp-and-blend two bracketing source frames to a fractional time.
+   * Returns null when the flow field is not ready yet, in which case the caller
+   * falls back to a dissolve. The frame is flagged incomplete so playback
+   * re-renders once the vectors land - that is what makes scrubbing converge in
+   * a frame or two instead of showing a permanent dissolve.
+   */
+  private async renderFlowInterp(
+    src: VideoSource,
+    asset: MediaAsset,
+    clip: Clip,
+    t0: number,
+    t1: number,
+    alpha: number,
+  ): Promise<{ tex: WebGLTexture; width: number; height: number; rt: RenderTarget } | null> {
+    const w = src.width;
+    const h = src.height;
+    if (!w || !h) return null;
+    const { gw, gh } = this.flowGrid(w, h);
+    const key = `flow:${asset.id}:${Math.round(t0 * 1000)}:${Math.round(t1 * 1000)}:${gw}x${gh}`;
+    const field =
+      getFlow(key) ??
+      requestFlow(
+        key,
+        async () => {
+          const [fa, fb] = await Promise.all([src.getFrame(t0), src.getFrame(t1)]);
+          if (!fa || !fb) return null;
+          const a = this.frameToImageData(fa);
+          const b = this.frameToImageData(fb);
+          return a && b ? { a, b } : null;
+        },
+        gw,
+        gh,
+      );
+    if (!field) {
+      this.lastFrameIncomplete = true;
+      return null;
+    }
+    const [fa, fb] = await Promise.all([src.getFrame(t0), src.getFrame(t1)]);
+    if (!fa || !fb) return null;
+
+    const cached = this.flowTexCache.get(key);
+    const flowTex = cached ? cached.tex : this.core.uploadFlow16(null, field.data, field.gw, field.gh);
+    if (!flowTex) return null;
+    if (!cached) {
+      if (this.flowTexCache.size > 8) {
+        const oldest = this.flowTexCache.keys().next().value;
+        if (oldest) {
+          this.core.deleteTexture(this.flowTexCache.get(oldest)!.tex);
+          this.flowTexCache.delete(oldest);
+        }
+      }
+      this.flowTexCache.set(key, { tex: flowTex, key });
+    }
+
+    const rt = this.core.acquire(w, h);
+    this.core.bindTarget(rt, w, h);
+    const prog = this.core.program('flow', FLOW_FRAG);
+    const ta = this.cacheTexture(`fa:${clip.id}:${Math.round(t0 * 1000)}`, 'flowA:' + clip.id, (t) => this.core.upload(t, fa as TexImageSource), w, h);
+    const tb = this.cacheTexture(`fb:${clip.id}:${Math.round(t1 * 1000)}`, 'flowB:' + clip.id, (t) => this.core.upload(t, fb as TexImageSource), w, h);
+    this.core.bindTex(0, ta);
+    this.core.bindTex(1, tb);
+    this.core.bindTex(2, flowTex);
+    this.core.setInt(prog, 'u_a', 0);
+    this.core.setInt(prog, 'u_b', 1);
+    this.core.setInt(prog, 'u_flow', 2);
+    this.core.setUniform(prog, 'u_res', [w, h]);
+    this.core.setUniform(prog, 'u_alpha', alpha);
+    this.core.setUniform(prog, 'u_occlusion', 0.02);
+    this.core.drawQuad();
+    return { tex: rt.tex, width: w, height: h, rt };
+  }
+
+  /** Cross-dissolve two bracketing source frames - the `blend` interpolation mode. */
+  private async renderBlendInterp(
+    src: VideoSource,
+    clip: Clip,
+    t0: number,
+    t1: number,
+    alpha: number,
+  ): Promise<{ tex: WebGLTexture; width: number; height: number; rt: RenderTarget } | null> {
+    const w = src.width;
+    const h = src.height;
+    if (!w || !h) return null;
+    const [fa, fb] = await Promise.all([src.getFrame(t0), src.getFrame(t1)]);
+    if (!fa || !fb) return null;
+    const rt = this.core.acquire(w, h);
+    this.core.bindTarget(rt, w, h);
+    const prog = this.core.program('lerp', LERP_FRAG);
+    const ta = this.cacheTexture(`i0:${clip.id}:${Math.round(t0 * 1000)}`, 'blendA:' + clip.id, (t) => this.core.upload(t, fa as TexImageSource), w, h);
+    const tb = this.cacheTexture(`i1:${clip.id}:${Math.round(t1 * 1000)}`, 'blendB:' + clip.id, (t) => this.core.upload(t, fb as TexImageSource), w, h);
+    this.core.bindTex(0, ta);
+    this.core.bindTex(1, tb);
+    this.core.setInt(prog, 'u_a', 0);
+    this.core.setInt(prog, 'u_b', 1);
+    this.core.setUniform(prog, 'u_alpha', alpha);
+    this.core.drawQuad();
+    return { tex: rt.tex, width: w, height: h, rt };
   }
 
   /* ---------- effects ---------- */
@@ -358,6 +541,63 @@ export class Compositor {
     return tex;
   }
 
+  /**
+   * Volume texture for a LUT id. LUTs load asynchronously from IndexedDB, so a
+   * miss returns the identity cube, kicks off the load and flags the frame
+   * incomplete so the playback loop re-renders once the data arrives. The
+   * alternative would be a visible flash of ungraded footage.
+   */
+  private lutTexture(lutId: string): { tex: WebGLTexture; size: number } {
+    if (!this.identityLutTex) {
+      const id = identityLut(17);
+      this.identityLutTex = this.core.uploadLut3D(null, id.rgba, id.size);
+    }
+    const fallback = { tex: this.identityLutTex ?? this.whiteMaskTex, size: 17 };
+    if (!lutId) return fallback;
+    const hit = this.lutTexCache.get(lutId);
+    if (hit) return { tex: hit.tex, size: hit.size };
+    const lut = getLutSync(lutId);
+    if (!lut) {
+      preloadLut(lutId);
+      this.lastFrameIncomplete = true;
+      return fallback;
+    }
+    const tex = this.core.uploadLut3D(null, lut.rgba, lut.size);
+    if (!tex) return fallback;
+    if (this.lutTexCache.size > 6) {
+      const oldest = this.lutTexCache.keys().next().value;
+      if (oldest) {
+        this.core.deleteTexture(this.lutTexCache.get(oldest)!.tex);
+        this.lutTexCache.delete(oldest);
+      }
+    }
+    this.lutTexCache.set(lutId, { tex, size: lut.size, ref: lut });
+    return { tex, size: lut.size };
+  }
+
+  /**
+   * Synthetic `customLut` instance for an asset's input interpretation.
+   *
+   * Reusing the effect rather than a separate code path means the transform gets
+   * the same LUT cache, the same half-float volume upload and the same shader as
+   * a user-added grade. Params are left empty: setParamUniforms falls back to the
+   * registry defaults, which for this effect are the neutral values (100%
+   * intensity, no exposure or contrast trim).
+   */
+  private inputTransformEffect(asset: MediaAsset | undefined): EffectInstance | null {
+    const it = asset?.interpret;
+    if (!it) return null;
+    const lutId = it.inputLutId || (it.inputTransform && it.inputTransform !== 'none' ? `transform:${it.inputTransform}` : '');
+    if (!lutId) return null;
+    return { id: 'inputTransform', type: 'customLut', enabled: true, params: {}, masks: [], data: { lutId } };
+  }
+
+  /** Drop cached LUT volumes (called when the LUT library changes). */
+  invalidateLuts() {
+    for (const e of this.lutTexCache.values()) this.core.deleteTexture(e.tex);
+    this.lutTexCache.clear();
+  }
+
   /** Apply a list of effects to an input texture (premultiplied). Returns a RenderTarget the caller must release. */
   private applyEffects(input: WebGLTexture, width: number, height: number, effects: EffectInstance[], local: number, seqTime: number, fps: number, ownerId: string, matteTex: WebGLTexture | null): RenderTarget {
     const gl = this.gl;
@@ -390,11 +630,19 @@ export class Compositor {
         this.core.setInt(prog, 'u_tex', 0);
         this.core.bindTex(1, orig.tex);
         this.core.setInt(prog, 'u_orig', 1);
-        // echo previous frame buffer
-        if (fx.type === 'echo') {
+        // previous rendered frame of this owner (echo trails, motion blur)
+        if (PREV_FRAME_EFFECTS.has(fx.type)) {
           const eb = this.echoBuffers.get(ownerId + fx.id);
           this.core.bindTex(2, eb ? eb.tex : this.blackTex);
           this.core.setInt(prog, 'u_prev', 2);
+        }
+        // 3D LUT volume
+        if (fx.type === 'customLut') {
+          const lutId = String(fx.data?.lutId ?? '') || 'transform:none';
+          const l = this.lutTexture(lutId);
+          this.core.bindTex3D(4, l.tex);
+          this.core.setInt(prog, 'u_lut', 4);
+          this.core.setUniform(prog, 'u_lutSize', l.size);
         }
         if (fx.type === 'trackMatteKey') {
           this.core.bindTex(3, matteTex ?? this.blackTex);
@@ -437,7 +685,7 @@ export class Compositor {
           lastOut = mixed;
         }
       }
-      if (fx.type === 'echo') {
+      if (PREV_FRAME_EFFECTS.has(fx.type)) {
         // persist output for next frame
         let eb = this.echoBuffers.get(ownerId + fx.id);
         if (!eb || eb.width !== width || eb.height !== height) {
@@ -536,7 +784,11 @@ export class Compositor {
     let tw = src.width,
       th = src.height;
     // Effects run at source resolution for media, sequence res for generators.
-    const fxList = opts.effects === false ? [] : clip.effects;
+    // An asset-level input transform (camera log conversion, or a LUT applied on
+    // decode) is prepended so a creative grade always sees display-referred
+    // Rec.709 rather than raw log values.
+    const inputFx = this.inputTransformEffect(asset);
+    const fxList = opts.effects === false ? [] : inputFx ? [inputFx, ...clip.effects] : clip.effects;
     if (fxList.some((e) => e.enabled)) {
       const ew = src.rt ? src.rt.width : Math.min(src.width, Math.round(W / (opts.scale ?? 1)) * 2);
       const eh = src.rt ? src.rt.height : Math.round((ew / src.width) * src.height);
@@ -761,7 +1013,7 @@ export class Compositor {
    *  to resize it twice per cycle, forcing a reallocation + repaint of the
    *  shared WebGL canvas on every frame. Smaller frames are letterboxed into
    *  the top-left corner and copied out with a source rect. */
-  present(rt: RenderTarget, opts: { bg?: [number, number, number]; channel?: number; checker?: boolean; viewport?: { x: number; y: number; w: number; h: number } } = {}) {
+  present(rt: RenderTarget, opts: { bg?: [number, number, number]; channel?: number; checker?: boolean; viewport?: { x: number; y: number; w: number; h: number }; display?: DisplayMode; zebraHi?: number; zebraLo?: number } = {}) {
     const gl = this.gl;
     if (this.canvas.width < rt.width || this.canvas.height < rt.height) {
       this.canvas.width = Math.max(this.canvas.width, rt.width);
@@ -793,6 +1045,9 @@ export class Compositor {
     this.core.setUniform(prog, 'u_bg', opts.bg ?? [0, 0, 0]);
     this.core.setInt(prog, 'u_channel', opts.channel ?? 0);
     this.core.setUniform(prog, 'u_checker', opts.checker ? 1 : 0);
+    this.core.setInt(prog, 'u_display', DISPLAY_INDEX[opts.display ?? 'none']);
+    this.core.setUniform(prog, 'u_zebraHi', opts.zebraHi ?? -1);
+    this.core.setUniform(prog, 'u_zebraLo', opts.zebraLo ?? -1);
     this.core.drawQuad();
   }
 

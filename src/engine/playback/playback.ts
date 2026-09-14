@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { Compositor } from '../gl/compositor';
+import { Compositor, type DisplayMode } from '../gl/compositor';
 import { TimelineAudio } from '../audio/timelineAudio';
 import { getSharedAudioContext } from '../audio/audioContext';
 import { getActiveSequence, sequenceDuration, useProject } from '../../state/projectStore';
@@ -366,7 +366,10 @@ export function currentRenderTarget() {
 }
 
 /** Draw the latest composite into a visible canvas. */
-export function presentTo(canvas: HTMLCanvasElement, opts: { channel?: number; checker?: boolean; bg?: [number, number, number] }) {
+export function presentTo(
+  canvas: HTMLCanvasElement,
+  opts: { channel?: number; checker?: boolean; bg?: [number, number, number]; display?: DisplayMode; zebraHi?: number; zebraLo?: number },
+) {
   const comp = getCompositor();
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
@@ -382,7 +385,7 @@ export function presentTo(canvas: HTMLCanvasElement, opts: { channel?: number; c
     return;
   }
   presentedCanvases.add(canvas);
-  comp.present(lastRT, { channel: opts.channel, checker: opts.checker, bg: opts.bg });
+  comp.present(lastRT, { channel: opts.channel, checker: opts.checker, bg: opts.bg, display: opts.display, zebraHi: opts.zebraHi, zebraLo: opts.zebraLo });
   const src = comp.canvas as HTMLCanvasElement;
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
@@ -392,9 +395,9 @@ export function presentTo(canvas: HTMLCanvasElement, opts: { channel?: number; c
 }
 
 /** Render an arbitrary frame of a sequence to a canvas (thumbnails, export, source monitor). */
-export async function renderFrameToCanvas(project: Project, seq: Sequence, frame: number, target: HTMLCanvasElement, opts: { scale?: number; soloClipId?: string | null; captions?: boolean } = {}) {
+export async function renderFrameToCanvas(project: Project, seq: Sequence, frame: number, target: HTMLCanvasElement, opts: { scale?: number; soloClipId?: string | null; captions?: boolean; effects?: boolean } = {}) {
   const comp = getCompositor();
-  const rt = await comp.renderFrame(project, seq, frame, { scale: opts.scale ?? 1, soloClipId: opts.soloClipId ?? null, captions: opts.captions ?? true });
+  const rt = await comp.renderFrame(project, seq, frame, { scale: opts.scale ?? 1, soloClipId: opts.soloClipId ?? null, captions: opts.captions ?? true, effects: opts.effects ?? true });
   comp.drawToCanvas(rt, target);
   comp.release(rt);
   // restore main render target state for the program monitor

@@ -119,6 +119,7 @@ function buildItems(): Item[] {
   C('kenBurns', 'Pan & Zoom (Ken Burns)...', () => ui.openModal({ kind: 'kenBurns' }), 'Editing', 'Animated zoom / pan across clips and photos');
   C('autoReframe', 'Auto Reframe...', () => ui.openModal({ kind: 'autoReframe' }), 'Editing', 'Reframe the sequence to 9:16 / 1:1 / 4:5 tracking the action');
   C('stabilize', 'Stabilize Clip (Warp Stabilizer)...', () => ui.openModal({ kind: 'stabilize' }), 'Editing', 'Analyze camera shake and smooth it with counteracting keyframes');
+  C('tracker', 'Track Motion (Pin Text / Blur)...', () => ui.openModal({ kind: 'tracker' }), 'Effects', 'Follow a moving object and pin a title, blur, mask or Corner Pin to it');
   C('splitScreen', 'Split Screen / Picture-in-Picture...', () => ui.openModal({ kind: 'splitScreen' }), 'Editing', 'Arrange 2-4 selected clips into a layout, each on its own track');
   C('autoMontage', 'Auto Montage (Cut to Music)...', () => ui.openModal({ kind: 'autoMontage' }), 'Editing', 'Build a new beat-synced montage sequence from your media');
   C('syncAudio', 'Sync Clips by Audio...', () => ui.openModal({ kind: 'syncAudio' }), 'Audio', 'Align double-system recordings by cross-correlating their waveforms');

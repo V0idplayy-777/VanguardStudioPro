@@ -903,28 +903,21 @@ export const EFFECTS: EffectDef[] = [
     'cornerPin',
     'Corner Pin',
     'Distort',
-    'Map the four corners of the image to arbitrary points (planar homography).',
-    [P.pt('ul', 'Upper Left', [0, 0]), P.pt('ur', 'Upper Right', [1, 0]), P.pt('ll', 'Lower Left', [0, 1]), P.pt('lr', 'Lower Right', [1, 1])],
+    'Map the four corners of the image to arbitrary points (planar homography). Track the corners with the Point Tracker to pin a graphic, censor blur or screen replacement to a moving surface.',
+    [P.pt('ul', 'Upper Left', [0, 0]), P.pt('ur', 'Upper Right', [1, 0]), P.pt('ll', 'Lower Left', [0, 1]), P.pt('lr', 'Lower Right', [1, 1]), P.bool('showOutside', 'Render outside the quad', false)],
     [
       {
         frag: `
-  // Inverse bilinear mapping of uv into the quad (ul, ur, lr, ll)
-  vec2 a = p_ul, b = p_ur, cc = p_lr, d = p_ll;
-  vec2 e = b - a, f = d - a, g = a - b + cc - d, h = uv - a;
-  float k2 = g.x * f.y - g.y * f.x;
-  float k1 = e.x * f.y - e.y * f.x + h.x * g.y - h.y * g.x;
-  float k0 = h.x * e.y - h.y * e.x;
-  vec2 res;
-  if (abs(k2) < 1e-5) { res = vec2((h.x * k1 + f.x * k0) / (e.x * k1 - g.x * k0), -k0 / k1); }
-  else {
-    float w = k1 * k1 - 4.0 * k0 * k2; if (w < 0.0) { outColor = vec4(0.0); return; }
-    w = sqrt(w);
-    float v = (-k1 - w) / (2.0 * k2);
-    float u = (h.x - f.x * v) / (e.x + g.x * v);
-    if (u < 0.0 || u > 1.0 || v < 0.0 || v > 1.0) { v = (-k1 + w) / (2.0 * k2); u = (h.x - f.x * v) / (e.x + g.x * v); }
-    res = vec2(u, v);
-  }
-  outColor = sampleEdge(u_tex, res);`,
+  // A fragment shader iterates over DESTINATION pixels, so it needs the inverse
+  // of the unit-square -> quad map: invert3(quadMatrix(...)) takes this output
+  // coordinate back to the source coordinate to sample.
+  // Params are in uv space (y up), matching the rest of the effect registry.
+  mat3 M = invert3(quadMatrix(p_ul, p_ur, p_lr, p_ll));
+  vec3 q = M * vec3(uv, 1.0);
+  if (abs(q.z) < 1e-6) { outColor = vec4(0.0); return; }
+  vec2 src = q.xy / q.z;
+  if (p_showOutside > 0.5) outColor = sampleClamped(u_tex, src);
+  else outColor = sampleEdge(u_tex, src);`,
       },
     ],
   ),
@@ -1678,8 +1671,9 @@ export const EFFECTS: EffectDef[] = [
     [
       {
         frag: `
-  vec2 px = uv * u_res; vec2 half = u_res * 0.5; float r = min(p_radius, min(half.x, half.y));
-  vec2 d = abs(px - half) - (half - r);
+  // half is a reserved word in GLSL ES 3.00, so it cannot name a local.
+  vec2 px = uv * u_res; vec2 halfRes = u_res * 0.5; float r = min(p_radius, min(halfRes.x, halfRes.y));
+  vec2 d = abs(px - halfRes) - (halfRes - r);
   float dist = length(max(d, 0.0)) + min(max(d.x, d.y), 0.0) - r;
   float m = 1.0 - smoothstep(-max(p_feather, 0.5), 0.0, dist);
   outColor = c * m;`,
@@ -1731,6 +1725,198 @@ export const EFFECTS: EffectDef[] = [
     [P.num('fps', 'Frame Rate', 12, 1, 60, 0.5)],
     [{ frag: `outColor = c;` }],
     { animated: false },
+  ),
+
+  /* ===== 3D LUT (imported .cube / .3dl) ===== */
+  def(
+    'customLut',
+    'Creative LUT (3D)',
+    'Color Correction',
+    'Apply an imported .cube or .3dl LUT, or a generated input transform, as a trilinear 3D lookup.',
+    [
+      P.pct('intensity', 'Intensity', 100),
+      P.num('exposure', 'Exposure', 0, -2, 2, 0.01, { unit: ' EV', group: 'Pre-LUT' }),
+      P.pct('contrast', 'Contrast', 100, 50, 200, { group: 'Pre-LUT' }),
+      P.pct('saturation', 'Saturation', 100, 0, 200, { group: 'Post-LUT' }),
+    ],
+    [
+      {
+        frag: `
+  vec3 col = c.rgb; float a = c.a; if (a > 0.0001) col /= a;
+  // Pre-LUT trim: exposure in stops, contrast around middle gray. A LUT is only
+  // accurate when fed the levels it was built for, so this matters.
+  col *= pow(2.0, p_exposure);
+  col = clamp((col - 0.5) * (p_contrast / 100.0) + 0.5, 0.0, 1.0);
+  vec3 looked = applyLut3D(col);
+  looked = mix(col, looked, p_intensity / 100.0);
+  float L = luma(looked);
+  looked = mix(vec3(L), looked, p_saturation / 100.0);
+  outColor = vec4(clamp(looked, 0.0, 1.0) * a, a);`,
+      },
+    ],
+    { presets: [{ name: 'Full strength', values: { intensity: 100 } }, { name: 'Half', values: { intensity: 50 } }] },
+  ),
+
+  /* ===== Motion blur ===== */
+  def(
+    'motionBlur',
+    'Motion Blur',
+    'Time',
+    'Shutter-angle motion blur. Per-pixel motion is recovered from the previous frame with the brightness-constancy constraint, then the frame is blurred along it, so pans and re-timed footage get a natural streak instead of strobing.',
+    [
+      P.num('shutter', 'Shutter Angle', 180, 0, 360, 5, { unit: '°' }),
+      P.num('samples', 'Samples', 8, 2, 16, 1),
+      P.num('maxPixels', 'Max Blur Length', 48, 1, 256, 1, { unit: ' px', softMax: 96 }),
+      P.num('sensitivity', 'Motion Sensitivity', 100, 10, 400, 5, { unit: '%', group: 'Estimate' }),
+      P.num('smooth', 'Spatial Smoothing', 40, 0, 100, 1, { group: 'Estimate' }),
+    ],
+    [
+      {
+        frag: `
+  // dI/dt + grad(I) . v = 0  =>  v = -dI/dt * grad(I) / (|grad(I)|^2 + eps)
+  // A single-step Lucas-Kanade estimate per pixel. |grad|^2 is floored so flat
+  // areas do not divide into noise.
+  vec2 px = 1.0 / max(u_res, vec2(1.0));
+  vec4 prev = texture(u_prev, uv);
+  vec3 colNow = c.rgb; float aNow = c.a; if (aNow > 0.0001) colNow /= aNow;
+  vec3 colPrev = prev.rgb; float aPrev = prev.a; if (aPrev > 0.0001) colPrev /= aPrev;
+  float dI = luma(colNow) - luma(colPrev);
+  float gx = luma(texture(u_tex, uv + vec2(px.x, 0.0)).rgb) - luma(texture(u_tex, uv - vec2(px.x, 0.0)).rgb);
+  float gy = luma(texture(u_tex, uv + vec2(0.0, px.y)).rgb) - luma(texture(u_tex, uv - vec2(0.0, px.y)).rgb);
+  // Spatial smoothing of the estimate: average the gradient over a small box so
+  // the vector field is coherent instead of speckled.
+  float sm = p_smooth / 100.0;
+  if (sm > 0.01) {
+    vec2 o = px * (1.0 + sm * 3.0);
+    float gx2 = luma(texture(u_tex, uv + vec2(o.x, 0.0)).rgb) - luma(texture(u_tex, uv - vec2(o.x, 0.0)).rgb);
+    float gy2 = luma(texture(u_tex, uv + vec2(0.0, o.y)).rgb) - luma(texture(u_tex, uv - vec2(0.0, o.y)).rgb);
+    gx = mix(gx, gx2, sm); gy = mix(gy, gy2, sm);
+  }
+  float g2 = gx * gx + gy * gy + 1e-4;
+  vec2 v = -dI * vec2(gx, gy) / g2 * (p_sensitivity / 100.0);
+  float len = length(v);
+  float maxLen = p_maxPixels / max(u_res.x, u_res.y);
+  if (len > maxLen) v *= maxLen / max(len, 1e-6);
+  // 180 degrees at the sequence rate is half a frame interval of travel.
+  v *= (p_shutter / 360.0);
+  int N = int(clamp(p_samples, 2.0, 16.0));
+  vec3 acc = vec3(0.0); float wsum = 0.0;
+  for (int i = 0; i < 16; i++) {
+    if (i >= N) break;
+    float t = float(i) / float(N - 1) - 0.5;
+    vec4 s = texture(u_tex, clamp(uv + v * t, vec2(0.0), vec2(1.0)));
+    vec3 sc = s.rgb; float sa = s.a; if (sa > 0.0001) sc /= sa;
+    acc += sc; wsum += 1.0;
+  }
+  vec3 res = acc / max(wsum, 1e-4);
+  outColor = vec4(out * aNow, aNow);`,
+      },
+    ],
+    { animated: true },
+  ),
+
+  /* ===== Bokeh ===== */
+  def(
+    'bokehBlur',
+    'Bokeh Blur (Defocus)',
+    'Blur & Sharpen',
+    'Disc-shaped defocus with highlight gain, so bright points spread into creamy circles instead of a flat gaussian mush. Blade count gives polygonal aperture shapes.',
+    [
+      P.num('radius', 'Radius', 12, 0, 100, 0.5, { unit: '%', softMax: 40 }),
+      P.pct('amount', 'Amount', 100),
+      P.num('blades', 'Aperture Blades', 0, 0, 8, 1, { group: 'Aperture' }),
+      P.num('rotation', 'Aperture Rotation', 0, -180, 180, 1, { unit: '°', group: 'Aperture' }),
+      P.num('threshold', 'Highlight Threshold', 0.65, 0, 1, 0.01, { group: 'Highlights' }),
+      P.num('gain', 'Highlight Gain', 1.5, 0, 6, 0.05, { group: 'Highlights' }),
+    ],
+    [
+      {
+        frag: `
+  vec3 col = c.rgb; float a = c.a; if (a > 0.0001) col /= a;
+  vec2 pxs = 1.0 / max(u_res, vec2(1.0));
+  float R = (p_radius / 100.0) * min(u_res.x, u_res.y) * 0.5;
+  if (R < 0.5) { outColor = c; return; }
+  float GA = 2.399963229728653;   // golden angle: even disc coverage, no rings
+  int N = 32;
+  vec3 acc = vec3(0.0); float wsum = 0.0;
+  float br = max(p_blades, 0.0);
+  for (int i = 0; i < 32; i++) {
+    if (i >= N) break;
+    float f = (float(i) + 0.5) / float(N);
+    float r = sqrt(f) * R;
+    float ang = float(i) * GA + (p_rotation * 3.14159265 / 180.0);
+    // Polygonal aperture: modulate the radius with the blade count.
+    if (br >= 3.0) {
+      float seg = 6.2831853 / br;
+      float local = abs(mod(ang, seg) - seg * 0.5);
+      r *= cos(seg * 0.5) / max(cos(local), 0.2);
+    }
+    vec2 off = vec2(cos(ang), sin(ang)) * r * pxs;
+    vec4 s = texture(u_tex, clamp(uv + off, vec2(0.0), vec2(1.0)));
+    vec3 sc = s.rgb; float sa = s.a; if (sa > 0.0001) sc /= sa;
+    // Weight by how far above threshold the sample is: highlights spread wider.
+    float w = 1.0 + p_gain * max(0.0, luma(sc) - p_threshold);
+    acc += sc * w; wsum += w;
+  }
+  vec3 res = acc / max(wsum, 1e-4);
+  res = mix(col, res, clamp(p_amount / 100.0, 0.0, 1.0));
+  outColor = vec4(res * a, a);`,
+      },
+    ],
+    { presets: [{ name: 'Portrait 85mm', values: { radius: 18, blades: 0, threshold: 0.7, gain: 2 } }, { name: 'Anamorphic 6-blade', values: { radius: 24, blades: 6, threshold: 0.6, gain: 3 } }, { name: 'Dreamy', values: { radius: 40, blades: 0, threshold: 0.45, gain: 4 } }] },
+  ),
+  def(
+    'bokehLights',
+    'Bokeh Lights (Overlay)',
+    'Generate',
+    'Drifting out-of-focus light discs composited over the frame - the party/fairy-light overlay look. All procedural, nothing downloaded.',
+    [
+      P.num('count', 'Lights', 14, 1, 24, 1),
+      P.num('minSize', 'Min Size', 3, 1, 30, 0.5, { unit: '%' }),
+      P.num('maxSize', 'Max Size', 11, 2, 50, 0.5, { unit: '%' }),
+      P.pct('opacity', 'Opacity', 60),
+      P.num('rim', 'Rim Brightness', 55, 0, 100, 1, { group: 'Shape' }),
+      P.num('softness', 'Edge Softness', 40, 0, 100, 1, { group: 'Shape' }),
+      P.num('speed', 'Drift Speed', 25, 0, 200, 1),
+      P.num('twinkle', 'Twinkle', 30, 0, 100, 1),
+      P.sel('blend', 'Blend', 0, [{ value: 0, label: 'Screen' }, { value: 1, label: 'Add' }, { value: 2, label: 'Normal' }]),
+      P.col('color', 'Color A', '#ffd9a0'),
+      P.col('color2', 'Color B', '#a8d8ff'),
+    ],
+    [
+      {
+        frag: `
+  vec3 col = c.rgb; float a = c.a; if (a > 0.0001) col /= a;
+  float aspect = u_res.x / max(u_res.y, 1.0);
+  vec2 q = vec2((uv.x - 0.5) * aspect, uv.y - 0.5);
+  int N = int(clamp(p_count, 1.0, 24.0));
+  vec3 acc = vec3(0.0);
+  float soft = max(p_softness / 100.0, 0.02);
+  for (int i = 0; i < 24; i++) {
+    if (i >= N) break;
+    float fi = float(i);
+    vec2 s0 = vec2(hash12(vec2(fi, 1.7)), hash12(vec2(fi, 9.3)));
+    vec2 drift = vec2(hash12(vec2(fi, 3.1)) - 0.5, hash12(vec2(fi, 5.9)) - 0.5);
+    vec2 pos = fract(s0 + drift * u_seqTime * (p_speed / 100.0) * 0.12 + vec2(0.0, u_seqTime * (p_speed / 100.0) * 0.01));
+    pos = vec2((pos.x - 0.5) * aspect, pos.y - 0.5);
+    float rad = mix(p_minSize, p_maxSize, hash12(vec2(fi, 11.0))) / 100.0 * aspect;
+    float d = length(q - pos) / max(rad, 1e-4);
+    float disc = smoothstep(1.0, 1.0 - soft, d);
+    float rim = smoothstep(1.0 - soft * 1.6, 1.0 - soft * 0.4, d) * smoothstep(1.0 + soft * 0.2, 1.0 - soft * 0.4, d);
+    float v = disc * (1.0 - (p_rim / 100.0) * 0.55) + rim * (p_rim / 100.0);
+    vec3 tint = mix(p_color.rgb, p_color2.rgb, hash12(vec2(fi, 13.7)));
+    float ph = 0.5 + 0.5 * sin(u_seqTime * 1.7 + fi * 2.3);
+    acc += tint * v * mix(1.0, ph, p_twinkle / 100.0);
+  }
+  acc *= p_opacity / 100.0;
+  vec3 res = col;
+  if (p_blend < 0.5) res = 1.0 - (1.0 - col) * (1.0 - clamp(acc, 0.0, 1.0));
+  else if (p_blend < 1.5) res = col + acc;
+  else res = mix(col, acc, clamp(length(acc), 0.0, 1.0));
+  outColor = vec4(clamp(res, 0.0, 1.0) * a, a);`,
+      },
+    ],
+    { animated: true, presets: [{ name: 'Fairy lights', values: { count: 18, minSize: 2, maxSize: 7, opacity: 55, rim: 60 } }, { name: 'City night', values: { count: 10, minSize: 5, maxSize: 16, opacity: 70, rim: 35 } }, { name: 'Wedding', values: { count: 8, minSize: 8, maxSize: 22, opacity: 45, rim: 70, softness: 60 } }] },
   ),
 ];
 

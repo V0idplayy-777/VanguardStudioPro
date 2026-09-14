@@ -215,6 +215,77 @@ export class GLCore {
     gl.bindTexture(gl.TEXTURE_2D, tex);
   }
 
+  /**
+   * Upload a 2D float field as RGBA16F with LINEAR filtering.
+   * Used for optical flow, where 8-bit quantisation is far too coarse (1/255 of
+   * a frame is ~7px at 1080p) and bilinear interpolation between cells is what
+   * makes the warp read as smooth motion rather than blocky displacement.
+   */
+  uploadFlow16(tex: WebGLTexture | null, data: Float32Array, w: number, h: number): WebGLTexture | null {
+    const gl = this.gl;
+    const t = tex ?? gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    try {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, w, h, 0, gl.RGBA, gl.FLOAT, data);
+    } catch {
+      // FLOAT uploads to RGBA16F need EXT_color_buffer_float on some drivers.
+      return null;
+    }
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    return t;
+  }
+
+  /** Bind a volume (3D) texture — used by the LUT sampler. */
+  bindTex3D(unit: number, tex: WebGLTexture | null) {
+    const gl = this.gl;
+    gl.activeTexture(gl.TEXTURE0 + unit);
+    gl.bindTexture(gl.TEXTURE_3D, tex);
+  }
+
+  /**
+   * Upload a 3D LUT as an RGBA16F volume texture with trilinear filtering.
+   * `data` is size^3 * 4 floats with RED varying fastest, matching the .cube
+   * convention and WebGL's width/height/depth ordering.
+   *
+   * Half-float is required: an 8-bit LUT quantises a 33³ cube to ~2 code values
+   * per step in the shadows, which bands visibly in smooth gradients — exactly
+   * where a grade is supposed to be invisible.
+   */
+  uploadLut3D(tex: WebGLTexture | null, data: Float32Array, size: number): WebGLTexture | null {
+    const gl = this.gl;
+    const t = tex ?? gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_3D, t);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    try {
+      gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGBA16F, size, size, size, 0, gl.RGBA, gl.FLOAT, data);
+    } catch {
+      // RGBA16F is not uploadable on this driver: fall back to 8-bit rather than
+      // losing the LUT entirely. Banding beats a missing grade.
+      const bytes = new Uint8Array(size * size * size * 4);
+      for (let i = 0; i < bytes.length; i++) bytes[i] = Math.max(0, Math.min(255, Math.round((data[i] ?? 0) * 255)));
+      try {
+        gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGBA8, size, size, size, 0, gl.RGBA, gl.UNSIGNED_BYTE, bytes);
+      } catch {
+        gl.deleteTexture(t);
+        return null;
+      }
+    }
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+    gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
+    return t;
+  }
+
   /** Upload an image source into a (possibly reused) texture. */
   upload(tex: WebGLTexture | null, src: TexImageSource | VideoFrame, opts: { linear?: boolean; flipY?: boolean } = {}): WebGLTexture {
     const gl = this.gl;

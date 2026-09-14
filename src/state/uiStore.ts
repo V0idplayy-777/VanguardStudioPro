@@ -115,7 +115,9 @@ export interface ModalRequest {
     | 'rewindTrap'
     | 'dopamineAudio'
     | 'loopOutro'
-    | 'brandKit';
+    | 'brandKit'
+    | 'lutManager'
+    | 'tracker';
   payload?: any;
 }
 
@@ -159,6 +161,13 @@ interface UIState {
   toggleProgramOverlay: (o: ProgramOverlay) => void;
   programChannel: 'rgb' | 'alpha' | 'r' | 'g' | 'b' | 'luma';
   setProgramChannel: (c: UIState['programChannel']) => void;
+  /**
+   * Exposure monitoring aid on the Program Monitor. Never baked into a render -
+   * the compositor's readback path (scopes, export, thumbnails) always presents
+   * with display mode 'none'.
+   */
+  displayMode: 'none' | 'falseColor' | 'zebra' | 'both';
+  setDisplayMode: (m: UIState['displayMode']) => void;
   transparencyGrid: boolean;
   setTransparencyGrid: (b: boolean) => void;
   showKeyframeEditor: boolean;
@@ -316,6 +325,8 @@ export const useUI = create<UIState>((set, get) => ({
   },
   programChannel: 'rgb',
   setProgramChannel: (programChannel) => set({ programChannel }),
+  displayMode: 'none',
+  setDisplayMode: (displayMode) => set({ displayMode }),
   transparencyGrid: false,
   setTransparencyGrid: (transparencyGrid) => set({ transparencyGrid }),
   showKeyframeEditor: false,

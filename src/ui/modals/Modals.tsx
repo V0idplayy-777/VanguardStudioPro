@@ -3,7 +3,7 @@ import { useUI, toast, type ModalRequest, type WorkspaceId } from '../../state/u
 import { useProject, useActiveSequence, findAsset, createSequence, sequenceDuration } from '../../state/projectStore';
 import { usePlayback, renderFrameToCanvas } from '../../engine/playback/playback';
 import { useLayout } from '../../state/layoutStore';
-import { Modal, Button, Select, Checkbox, HotText, TextField, TextArea, TimecodeField, ColorChip, Segmented, Kbd, Slider } from '../controls';
+import { Modal, Button, IconButton, Select, Checkbox, HotText, TextField, TextArea, TimecodeField, ColorChip, Segmented, Kbd, Slider } from '../controls';
 import { Icon, Swatch, type IconName } from '../icons';
 import { cmd, pickAudioClip, splitScreenCells } from '../../app/commands';
 import { MONTAGE_ASPECTS } from '../../engine/montage/montage';
@@ -18,6 +18,7 @@ import { autosaveInfo, loadAutosavedProject, restoreProjectMedia, discardAutosav
 import { estimateStorage, listMediaKeys, deleteMediaBlob } from '../../engine/media/mediaDb';
 import { formatBytes, uid, isMac, rgbToHex, hexToRgb } from '../../engine/util';
 import { suggestKeyColor, renderKeyPreview } from '../../engine/color/chromaKey';
+import { INPUT_TRANSFORMS, listLuts } from '../../engine/color/lut';
 import { aboutVersionClick, foundCount, EGG_TOTAL, checkSpeedEgg, checkSequenceNameEgg } from '../../easter/eggs';
 import { useSettings, SETTINGS_META, ACCENT_PRESETS } from '../../state/settingsStore';
 import { TRANSITIONS, AUDIO_TRANSITIONS } from '../../engine/effects/transitions';
@@ -25,6 +26,8 @@ import { blankTextDocument, shapeLayer } from '../graphics/templates';
 import * as E from '../../engine/timeline/edits';
 import { evalNumber } from '../../engine/keyframes';
 import { ProxyManagerModal, TranscribeModal, MagicMaskModal, VoiceCleanupModal, ShortcutEditor } from './FeatureModals';
+import { LutManagerModal } from './LutManagerModal';
+import { TrackerModal } from './TrackerModal';
 import { RetentionCheckModal, SmartCaptionsModal, RewindTrapModal, DopamineModal, LoopOutroModal, BrandKitModal } from './RetentionModals';
 
 export const APP_VERSION = '1.1.0';
@@ -140,6 +143,10 @@ export function ModalHost() {
       return <LoopOutroModal {...props} />;
     case 'brandKit':
       return <BrandKitModal {...props} />;
+    case 'lutManager':
+      return <LutManagerModal {...props} />;
+    case 'tracker':
+      return <TrackerModal {...props} />;
     default:
       return null;
   }
@@ -1051,12 +1058,31 @@ function InterpretFootageModal({ modal, close }: P) {
   const [fps, setFps] = useState<number | ''>(asset?.interpret?.fps ?? '');
   const [par, setPar] = useState(asset?.interpret?.pixelAspect ?? 1);
   const [alpha, setAlpha] = useState<'straight' | 'premultiplied' | 'ignore'>(asset?.interpret?.alpha ?? 'straight');
+  const [inputTransform, setInputTransform] = useState(asset?.interpret?.inputTransform ?? 'none');
+  const [inputLutId, setInputLutId] = useState(asset?.interpret?.inputLutId ?? '');
+  const [lutOptions, setLutOptions] = useState<{ value: string; label: string; group?: string }[]>([]);
+  useEffect(() => {
+    let dead = false;
+    void listLuts().then((l) => {
+      if (!dead) setLutOptions([{ value: '', label: 'None' }, ...l.map((m) => ({ value: m.id, label: m.title }))]);
+    });
+    return () => {
+      dead = true;
+    };
+  }, []);
   if (!asset) return null;
+  const isVideo = asset.kind === 'video' || asset.hasVideo || asset.kind === 'image';
   const ok = () => {
     useProject.getState().update('Interpret footage', (p) => {
       const a = p.assets.find((x) => x.id === asset.id);
       if (!a) return;
-      a.interpret = { fps: fps === '' ? undefined : Number(fps), pixelAspect: par, alpha };
+      a.interpret = {
+        fps: fps === '' ? undefined : Number(fps),
+        pixelAspect: par,
+        alpha,
+        inputTransform: inputTransform === 'none' ? undefined : inputTransform,
+        inputLutId: inputLutId || undefined,
+      };
       if (fps !== '' && a.fps && a.duration) {
         // conform: duration changes with the assumed frame rate
         const frames = a.duration * a.fps;
@@ -1079,7 +1105,43 @@ function InterpretFootageModal({ modal, close }: P) {
         <Select value={String(par)} options={[{ value: '1', label: 'Square pixels (1.0)' }, { value: '0.9091', label: 'D1/DV NTSC (0.9091)' }, { value: '1.0940', label: 'D1/DV PAL (1.0940)' }, { value: '1.3333', label: 'HD Anamorphic 1080 (1.3333)' }, { value: '2', label: 'Anamorphic 2:1 (2.0)' }]} onChange={(v) => setPar(Number(v))} />
         <span className="label">Alpha</span>
         <Segmented value={alpha} options={[{ value: 'straight', label: 'Straight' }, { value: 'premultiplied', label: 'Premultiplied' }, { value: 'ignore', label: 'Ignore' }]} onChange={setAlpha} />
+        {isVideo ? (
+          <>
+            <span className="label">Shot as</span>
+            <Select
+              value={inputTransform}
+              options={INPUT_TRANSFORMS.map((t) => ({ value: t.id, label: t.id === 'none' ? 'Normal colours already (Rec.709 / standard)' : t.label, group: t.group }))}
+              onChange={(v) => {
+                setInputTransform(v);
+                // A camera log conversion and an imported LUT do the same job, so
+                // picking one clears the other rather than stacking two grades.
+                if (v !== 'none') setInputLutId('');
+              }}
+            />
+            <span className="label">Input LUT file</span>
+            <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <Select
+                value={inputLutId}
+                options={lutOptions}
+                onChange={(v) => {
+                  setInputLutId(v);
+                  if (v) setInputTransform('none');
+                }}
+                disabled={!lutOptions.length}
+              />
+              <IconButton icon="lut" label="Manage LUTs (import .cube files)" sm onClick={() => useUI.getState().openModal({ kind: 'lutManager' })} />
+            </span>
+          </>
+        ) : null}
       </div>
+      {isVideo ? (
+        <div style={{ marginTop: 10, fontSize: 11, color: 'var(--c-text-dim)', lineHeight: 1.5 }}>
+          <b>Shot as</b> fixes flat, washed-out camera footage. If the clip looks grey and low-contrast
+          straight out of the camera, it was recorded in a log profile - pick the one that matches your
+          camera and every clip from this file is converted to normal colours before any grading you add.
+          {inputTransform !== 'none' ? <><br /><br />{INPUT_TRANSFORMS.find((t) => t.id === inputTransform)?.note}</> : null}
+        </div>
+      ) : null}
       <div style={{ marginTop: 10, fontSize: 11, color: 'var(--c-text-dim)' }}>Conforming the frame rate re-times the clip (24 fps footage interpreted as 30 plays faster). Applies to clips added after this change.</div>
     </Modal>
   );
