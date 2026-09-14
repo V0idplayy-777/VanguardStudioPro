@@ -2,7 +2,7 @@ import { useProject, getActiveSequence, sequenceDuration, findAsset, createSeque
 import { useUI, toast, logEvent } from '../state/uiStore';
 import { usePlayback } from '../engine/playback/playback';
 import * as E from '../engine/timeline/edits';
-import type { Clip, Id, MediaAsset, Sequence, Marker, GeneratorKind, Transition, Param } from '../types/project';
+import type { Clip, Id, MediaAsset, Sequence, Marker, GeneratorKind, Transition, Param, TrackAnalysis } from '../types/project';
 import { uid, download, stripExt, formatDurationShort, rgbToHex } from '../engine/util';
 import { importFiles, pickFiles, MEDIA_ACCEPT } from '../engine/media/importer';
 import { getMedia } from '../engine/media/mediaStore';
@@ -15,6 +15,7 @@ import { TRANSITION_MAP } from '../engine/effects/transitions';
 import { param } from '../types/project';
 import { parseSRT, parseVTT } from '../engine/captions/subtitles';
 import { analyzeClipFrame, autoColorParamsFrom } from '../engine/color/autoColor';
+import { applyToCornerPin, applyToEffectParam, applyToGraphicLayer, applyToMask, clearApplied, type ApplyResult } from '../engine/track/applyTrack';
 import { useSettings } from '../state/settingsStore';
 
 /* ---------- helpers ---------- */
@@ -45,6 +46,13 @@ function mutateSeq(label: string, fn: (seq: Sequence, project: ReturnType<typeof
     if (seq) fn(seq, p);
   });
 }
+
+/** Where a finished track gets written. */
+export type TrackTarget =
+  | { type: 'effect'; effectId: Id; paramKey?: string }
+  | { type: 'mask'; effectId: Id; maskId: Id }
+  | { type: 'cornerPin'; effectId: Id }
+  | { type: 'graphicLayer'; layerId: Id };
 
 function withSelectionExpanded(seq: Sequence, ids: Id[]) {
   return E.expandSelection(seq, ids, useUI.getState().linkedSelection);
@@ -400,6 +408,109 @@ export const cmd = {
     });
     useUI.getState().setSelection({ effectId: null });
   },
+  /**
+   * Add (or re-point) a Creative LUT effect on the given clips.
+   *
+   * If a clip already carries a customLut it is updated in place rather than
+   * stacking a second one, so re-picking a LUT in the manager never piles up
+   * grades. The LUT id lives in `data` because the registry params are numeric /
+   * colour / point values only.
+   */
+  applyLutToClips(ids: Id[], lutId: string, lutTitle: string) {
+    if (!ids.length) {
+      toast('info', 'No clip selected', 'Select one or more clips in the timeline first.');
+      return;
+    }
+    const def = getEffectDef('customLut');
+    if (!def) return;
+    let applied = 0;
+    mutateSeq(`Apply LUT ${lutTitle}`, (seq) => {
+      for (const c of seq.clips) {
+        if (!ids.includes(c.id)) continue;
+        if (seq.tracks.find((t) => t.id === c.trackId)?.kind !== 'video') continue;
+        const existing = c.effects.find((e) => e.type === 'customLut');
+        if (existing) {
+          existing.data = { ...(existing.data ?? {}), lutId, lutTitle };
+          existing.enabled = true;
+        } else {
+          c.effects.push({ id: uid('fx'), type: 'customLut', enabled: true, params: defaultEffectParams(def), masks: [], data: { lutId, lutTitle } });
+        }
+        applied++;
+      }
+    });
+    if (applied) {
+      toast('success', `LUT applied to ${applied} clip${applied === 1 ? '' : 's'}`, lutTitle);
+      logEvent('info', `Applied LUT "${lutTitle}"`, `${applied} clip(s)`);
+    } else {
+      toast('info', 'Nothing to apply', 'Only video clips can take a LUT.');
+    }
+  },
+  /* ---------- point / planar tracking ---------- */
+
+  /** Store a finished analysis on the clip so it can be re-applied later. */
+  savePointTrack(clipId: Id, ta: TrackAnalysis) {
+    let saved = false;
+    mutateSeq(`Point track ${ta.name}`, (seq) => {
+      const c = seq.clips.find((x) => x.id === clipId);
+      if (!c) return;
+      c.tracks = [...(c.tracks ?? []).filter((t) => t.id !== ta.id), ta];
+      saved = true;
+    });
+    return saved;
+  },
+
+  deletePointTrack(clipId: Id, taId: Id) {
+    mutateSeq('Delete point track', (seq) => {
+      const c = seq.clips.find((x) => x.id === clipId);
+      if (!c?.tracks) return;
+      c.tracks = c.tracks.filter((t) => t.id !== taId);
+    });
+  },
+
+  /**
+   * Write a stored track onto a parameter. Every target writes keyframes on the
+   * clip's local timeline, so the motion survives trimming and retiming.
+   */
+  applyPointTrack(clipId: Id, taId: Id, target: TrackTarget): boolean {
+    let result: ApplyResult | null = null;
+    mutateSeq('Apply point track', (seq, p) => {
+      const c = seq.clips.find((x) => x.id === clipId);
+      const ta = c?.tracks?.find((t) => t.id === taId);
+      if (!c || !ta) return;
+      if (target.type === 'effect') result = applyToEffectParam(c, ta, target.effectId, target.paramKey);
+      else if (target.type === 'mask') result = applyToMask(c, ta, target.effectId, target.maskId);
+      else if (target.type === 'cornerPin') result = applyToCornerPin(c, ta, target.effectId);
+      else result = applyToGraphicLayer(c, seq, ta, target.layerId);
+      void p;
+    });
+    const r = result as ApplyResult | null;
+    if (r?.ok) {
+      toast('success', `Track applied to ${r.label}`, `${r.wrote} keyframe(s) written.`);
+      logEvent('info', `Applied ${r.label}`, `${r.wrote} keyframes`);
+      return true;
+    }
+    toast('error', 'Could not apply the track', r?.reason ?? 'Unknown reason.');
+    return false;
+  },
+
+  /** Remove the keyframes a track wrote, without rolling back other edits. */
+  clearPointTrack(clipId: Id, taId: Id): boolean {
+    let result: ApplyResult | null = null;
+    mutateSeq('Clear applied point track', (seq) => {
+      const c = seq.clips.find((x) => x.id === clipId);
+      const ta = c?.tracks?.find((t) => t.id === taId);
+      if (!c || !ta) return;
+      result = clearApplied(c, seq, ta);
+    });
+    const r = result as ApplyResult | null;
+    if (r?.ok) {
+      toast('success', 'Track cleared', 'The parameter is back to a single static value.');
+      return true;
+    }
+    toast('error', 'Could not clear the track', r?.reason ?? 'Unknown reason.');
+    return false;
+  },
+
   copyEffect(clipId: Id, fxId: Id) {
     const seq = seqNow();
     const fx = seq?.clips.find((c) => c.id === clipId)?.effects.find((e) => e.id === fxId);

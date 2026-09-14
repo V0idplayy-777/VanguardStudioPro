@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useProject, useActiveSequence, findAsset } from '../../state/projectStore';
 import { useUI, toast, type ContextMenuItem } from '../../state/uiStore';
 import { usePlayback } from '../../engine/playback/playback';
@@ -16,6 +16,7 @@ import { cmd } from '../../app/commands';
 import { uid, hexToRgb, rgbToHex, clamp } from '../../engine/util';
 import { framesToTimecode } from '../../engine/timecode';
 import { cleanupRemovedEffect } from '../../engine/mask/maskStore';
+import { lutChoices, onLutChange, type LutChoice } from '../../engine/color/lut';
 
 const BLEND_MODES = ['normal', 'dissolve', 'darken', 'multiply', 'colorBurn', 'linearBurn', 'lighten', 'screen', 'colorDodge', 'linearDodge', 'overlay', 'softLight', 'hardLight', 'difference', 'exclusion', 'hue', 'saturation', 'color', 'luminosity'];
 
@@ -471,6 +472,70 @@ function ColorRow(props: BaseRow & { onChange: (v: [number, number, number, numb
   );
 }
 
+/**
+ * Which LUT the Creative LUT effect reads.
+ *
+ * The registry's param kinds are numeric, colour, point, bool and select - there
+ * is no "pick from a dynamic, user-extensible library" kind, and adding one would
+ * mean teaching the keyframe system about string values. The LUT id lives in the
+ * effect's opaque `data` bag instead, exactly as Magic Mask stores its track id.
+ */
+function LutPickerRow({ fx, write }: { fx: Clip['effects'][number]; write: (label: string, fn: (c: Clip, s: Sequence) => void, transient?: boolean) => void }) {
+  const [choices, setChoices] = useState<LutChoice[]>([]);
+  const openModal = useUI((st) => st.openModal);
+  const lutId = String(fx.data?.lutId ?? '');
+
+  // Load once, then re-read whenever the library changes elsewhere (the LUT
+  // Manager imports, renames or deletes). onLutChange returns the unsubscribe
+  // function, so returning it directly is the whole cleanup.
+  useEffect(() => {
+    let dead = false;
+    const load = () => void lutChoices().then((c) => { if (!dead) setChoices(c); });
+    load();
+    return onLutChange(load);
+  }, []);
+
+  const current = choices.find((c) => c.id === lutId);
+  const groups = Array.from(new Set(choices.map((c) => c.group)));
+  const options: { value: string; label: string; group?: string }[] = groups.flatMap((g) =>
+    choices.filter((c) => c.group === g).map((c) => ({ value: c.id, label: c.title, group: g })),
+  );
+  // A dangling id (LUT deleted, or a project opened on another machine) has to
+  // still be representable, or Select would show a value that is not in its
+  // option list and the user could not tell what happened.
+  if (lutId && !current) options.unshift({ value: lutId, label: 'Missing LUT - pick another' });
+  if (!lutId) options.unshift({ value: '', label: 'Choose a LUT...' });
+
+  return (
+    <>
+      <div className="ec-row">
+        <span style={{ width: 16 }} />
+        <span style={{ width: 48 }} />
+        <span style={{ width: 16 }} />
+        <span className="ec-name">LUT</span>
+        <div className="ec-value" style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+          <Select
+            value={lutId}
+            options={options}
+            onChange={(v) => write('Choose LUT', (c) => { const f = c.effects.find((x) => x.id === fx.id); if (f) f.data = { ...(f.data ?? {}), lutId: v, lutTitle: choices.find((x) => x.id === v)?.title ?? '' }; })}
+            style={{ width: 190 }}
+            title={current ? current.title : 'The LUT file this effect reads'}
+          />
+          <IconButton icon="lut" label="Manage LUTs (import .cube files, preview, rename)" sm onClick={() => openModal({ kind: 'lutManager', payload: { lutId } })} />
+        </div>
+      </div>
+      {!lutId ? (
+        <div className="ec-row">
+          <span style={{ width: 80 }} />
+          <span className="ec-name sub" style={{ whiteSpace: 'normal', lineHeight: 1.45 }}>
+            No LUT chosen yet - this effect does nothing until you pick one. Use the button above to import a .cube or .3dl file.
+          </span>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 function EffectParams({ clip, fx, def, rowProps, setValue, beginDrag, endDrag, write, seq }: { clip: Clip; fx: Clip['effects'][number]; def: EffectDef; rowProps: (path: string, def: ParamValue, keyframable?: boolean) => any; setValue: (path: string, v: ParamValue, commit: boolean, label?: string) => void; beginDrag: () => void; endDrag: () => void; write: (label: string, fn: (c: Clip, s: Sequence) => void, transient?: boolean) => void; seq: Sequence }) {
   const groups: { name: string | undefined; params: ParamDef[] }[] = [];
   for (const pd of def.params) {
@@ -491,6 +556,7 @@ function EffectParams({ clip, fx, def, rowProps, setValue, beginDrag, endDrag, w
   return (
     <>
       {preset}
+      {def.type === 'customLut' ? <LutPickerRow fx={fx} write={write} /> : null}
       {groups.map((g, gi) => {
         const gOpen = g.name ? (openGroups[g.name] ?? gi === 0) : true;
         return (

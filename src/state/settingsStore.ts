@@ -84,6 +84,10 @@ export interface SettingsState {
   /* Performance */
   thumbnailQuality: ThumbQuality;
   showFpsOverlay: boolean;
+  /** Zebra over-exposure threshold, in display code values (0-1). -1 disables. */
+  zebraHigh: number;
+  /** Zebra under-exposure threshold, in display code values (0-1). -1 disables. */
+  zebraLow: number;
   /** Decode cache size (frames per source), 24-160. */
   decodeCacheSize: number;
 
@@ -134,6 +138,8 @@ export const SETTINGS_META: Record<string, { label: string; category: string; hi
   sttLanguage: { label: 'Transcription language', category: 'Captions' },
   thumbnailQuality: { label: 'Timeline thumbnails', category: 'Performance' },
   showFpsOverlay: { label: 'Show performance overlay', category: 'Performance', hint: 'Frame rate, render time and dropped frames on the Program Monitor.' },
+  zebraHigh: { label: 'Zebra: highlight threshold', category: 'Monitoring', hint: 'Brightness at which the clipping hatch appears. 1.0 flags only fully clipped pixels; 0.9 warns before you lose detail. Set to -1 to turn off.' },
+  zebraLow: { label: 'Zebra: shadow threshold', category: 'Monitoring', hint: 'Brightness below which the crushed-shadow hatch appears. Set to -1 to turn off.' },
   decodeCacheSize: { label: 'Decode cache (frames)', category: 'Performance' },
   floatPipeline: { label: 'Half-float render pipeline', category: 'Experimental' },
   snapshotPresentation: { label: 'Snapshot presentation', category: 'Experimental', hint: 'Monitors present from a private copy of each rendered frame. Turn off only if you see display issues on exotic drivers.' },
@@ -191,6 +197,8 @@ const DEFAULTS = {
 
   thumbnailQuality: 'high' as const,
   showFpsOverlay: false,
+  zebraHigh: 1.0,
+  zebraLow: -1,
   decodeCacheSize: 48,
 
   floatPipeline: true,

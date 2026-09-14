@@ -87,7 +87,7 @@ export function createEmptyProject(name = 'Untitled Project'): Project {
   const seq = createSequence('Sequence 01');
   return {
     id: uid('proj'),
-    version: 3,
+    version: 4,
     settings: defaultProjectSettings(name),
     bins: [],
     assets: [],
