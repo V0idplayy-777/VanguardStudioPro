@@ -938,7 +938,7 @@ export class Compositor {
         }
         this.captionCtx.clearRect(0, 0, cw, ch);
         this.captionCtx.setTransform(cw / seq.settings.width, 0, 0, ch / seq.settings.height, 0, 0);
-        for (const c of active) renderCaption(this.captionCtx, c.text, { ...seq.captionTrack.style, ...(c.style ?? {}) }, seq.settings.width, seq.settings.height, frame - c.start, seq.settings.fps);
+        for (const c of active) renderCaption(this.captionCtx, c.text, { ...seq.captionTrack.style, ...(c.style ?? {}) }, seq.settings.width, seq.settings.height, frame - c.start, seq.settings.fps, c.words, frame);
         this.captionCtx.setTransform(1, 0, 0, 1, 0, 0);
         const tex = this.core.upload(this.texCache.get('captions')?.tex ?? null, this.captionCanvas);
         this.texCache.set('captions', { tex, key: 'cap', width: cw, height: ch, lastUsed: this.frameCounter });

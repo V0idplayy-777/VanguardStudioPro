@@ -31,6 +31,8 @@ export type PanelId =
   | 'mediaBrowser'
   | 'storyboard'
   | 'retention'
+  | 'textEditing'
+  | 'multicam'
   | 'learn';
 
 export type WorkspaceId = 'editing' | 'assembly' | 'color' | 'effects' | 'audio' | 'graphics' | 'retention' | 'captions' | 'review' | 'export' | 'custom';
@@ -172,6 +174,10 @@ interface UIState {
   setTransparencyGrid: (b: boolean) => void;
   showKeyframeEditor: boolean;
   setShowKeyframeEditor: (b: boolean) => void;
+  pancakeMode: boolean;
+  setPancakeMode: (b: boolean) => void;
+  pancakeSequenceId: Id | null;
+  setPancakeSequenceId: (id: Id | null) => void;
 
   /** Source monitor state. */
   sourceAssetId: Id | null;
@@ -331,6 +337,10 @@ export const useUI = create<UIState>((set, get) => ({
   setTransparencyGrid: (transparencyGrid) => set({ transparencyGrid }),
   showKeyframeEditor: false,
   setShowKeyframeEditor: (showKeyframeEditor) => set({ showKeyframeEditor }),
+  pancakeMode: false,
+  setPancakeMode: (pancakeMode) => set({ pancakeMode }),
+  pancakeSequenceId: null,
+  setPancakeSequenceId: (pancakeSequenceId) => set({ pancakeSequenceId }),
 
   sourceAssetId: null,
   setSourceAssetId: (sourceAssetId) =>

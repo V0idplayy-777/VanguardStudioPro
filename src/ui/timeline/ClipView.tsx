@@ -21,7 +21,7 @@ interface Props {
   scrollFrame: number;
   laneWidth: number;
   showRubber: boolean;
-  onPointerDown: (e: React.PointerEvent, part: 'body' | 'trimL' | 'trimR' | 'rubber' | 'kf' | 'transIn' | 'transOut', extra?: any) => void;
+  onPointerDown: (e: React.PointerEvent, part: 'body' | 'trimL' | 'trimR' | 'rubber' | 'kf' | 'transIn' | 'transOut' | 'fadeInHandle' | 'fadeOutHandle', extra?: any) => void;
   onContextMenu: (e: React.MouseEvent) => void;
   onDoubleClick: (e: React.MouseEvent) => void;
 }
@@ -147,6 +147,9 @@ export const ClipView = React.memo(function ClipView({ clip, track, asset, seq, 
   const trOutLeft = trOut ? width - (trOut.alignment === 'center' ? trW(trOut.duration) / 2 : trOut.alignment === 'start' ? trW(trOut.duration) : 0) - (trOut.alignment === 'end' ? 0 : 0) : 0;
   const trOutLeftFinal = trOut ? (trOut.alignment === 'end' ? width - trW(trOut.duration) : trOutLeft) : 0;
 
+  const fadeInPx = (clip.audio.fadeIn ?? 0) * ppf;
+  const fadeOutPx = (clip.audio.fadeOut ?? 0) * ppf;
+
   return (
     <div
       className={['clip', selected ? 'selected' : '', dragging ? 'dragging' : '', clip.enabled ? '' : 'disabled', offline ? 'offline' : ''].filter(Boolean).join(' ')}
@@ -176,7 +179,39 @@ export const ClipView = React.memo(function ClipView({ clip, track, asset, seq, 
         {badgeText ? <span className="speed-badge">{badgeText}</span> : null}
         {clip.freezeAt != null ? <span className="freeze-badge">HOLD</span> : null}
         {clip.timeRemap && clip.timeRemap.length >= 2 ? <span className="freeze-badge">REMAP</span> : null}
+
+        {/* Audio Waveform Fade Overlays & Drag Handles */}
+        {isAudio || asset?.hasAudio ? (
+          <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 3 }}>
+            {fadeInPx > 0 ? <path d={`M 0 0 L ${fadeInPx} 0 L 0 ${height} Z`} fill="rgba(0,0,0,0.3)" /> : null}
+            {fadeOutPx > 0 ? <path d={`M ${width} 0 L ${width - fadeOutPx} 0 L ${width} ${height} Z`} fill="rgba(0,0,0,0.3)" /> : null}
+          </svg>
+        ) : null}
       </div>
+
+      {/* Fade Handles */}
+      {(isAudio || asset?.hasAudio) && tall ? (
+        <>
+          <div
+            className="fade-handle-l"
+            style={{ position: 'absolute', left: Math.max(0, fadeInPx - 4), top: 0, width: 8, height: 12, background: '#ffd54a', cursor: 'ew-resize', zIndex: 10, borderRadius: '0 0 4px 0' }}
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              onPointerDown(e, 'fadeInHandle');
+            }}
+            title="Drag to adjust Audio Fade In"
+          />
+          <div
+            className="fade-handle-r"
+            style={{ position: 'absolute', left: Math.min(width - 8, width - fadeOutPx - 4), top: 0, width: 8, height: 12, background: '#ffd54a', cursor: 'ew-resize', zIndex: 10, borderRadius: '0 0 0 4px' }}
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              onPointerDown(e, 'fadeOutHandle');
+            }}
+            title="Drag to adjust Audio Fade Out"
+          />
+        </>
+      ) : null}
       {rubber ? (
         <>
           {rubber.keyframed ? (
