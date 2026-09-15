@@ -339,7 +339,7 @@ export function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w
 }
 
 /** Draw a caption block with the given style. `localFrame`/`fps` (optional) drive entry animations. */
-export function renderCaption(ctx: CanvasRenderingContext2D, text: string, style: CaptionStyle, width: number, height: number, localFrame = 0, fps = 30) {
+export function renderCaption(ctx: CanvasRenderingContext2D, text: string, style: CaptionStyle, width: number, height: number, localFrame = 0, fps = 30, captionWords?: { t0: number; t1: number; text: string }[], sequenceFrame = 0) {
   ctx.save();
   ctx.font = `${style.italic ? 'italic ' : ''}${style.fontWeight} ${style.fontSize}px "${style.fontFamily}", "Inter Variable", Inter, sans-serif`;
   ctx.letterSpacing = `${style.letterSpacing}px`;
@@ -360,6 +360,7 @@ export function renderCaption(ctx: CanvasRenderingContext2D, text: string, style
   const totalChars = wrapped.reduce((n, line) => n + line.reduce((m, w) => m + w.text.length + 1, 0), 0);
   const charBudget = anim === 'typewriter' ? Math.ceil(totalChars * p) : Infinity;
   let charsUsed = 0;
+  let wordIndex = 0;
 
   const lh = style.fontSize * 1.25;
   const pad = style.fontSize * 0.3;
@@ -412,6 +413,12 @@ export function renderCaption(ctx: CanvasRenderingContext2D, text: string, style
         charsUsed += w.text.length;
         if (charsUsed > charBudget) break;
       }
+
+      // Check for word-level karaoke active highlight
+      const curWordInfo = captionWords && captionWords[wordIndex];
+      const isKaraokeActive = style.karaoke && curWordInfo && sequenceFrame >= curWordInfo.t0 && sequenceFrame < curWordInfo.t1;
+      const isWordSpoken = style.karaoke && curWordInfo && sequenceFrame >= curWordInfo.t1;
+
       const ww = ctx.measureText(w.text).width;
       if (style.edge === 'shadow') {
         ctx.shadowColor = style.edgeColor;
@@ -424,11 +431,27 @@ export function renderCaption(ctx: CanvasRenderingContext2D, text: string, style
         ctx.strokeStyle = style.edgeColor;
         ctx.strokeText(w.text, x, lineY);
       }
-      ctx.fillStyle = w.kicker ? (style.kickerColor ?? '#ffd54a') : style.color;
-      ctx.fillText(w.text, x, lineY);
+
+      if (isKaraokeActive) {
+        ctx.save();
+        ctx.translate(x + ww / 2, lineY - style.fontSize * 0.35);
+        ctx.scale(1.15, 1.15); // Active word pop
+        ctx.translate(-(x + ww / 2), -(lineY - style.fontSize * 0.35));
+        ctx.fillStyle = style.karaokeColor ?? '#ffd54a';
+        ctx.fillText(w.text, x, lineY);
+        ctx.restore();
+      } else if (isWordSpoken) {
+        ctx.fillStyle = style.karaokeColor ?? '#ffd54a';
+        ctx.fillText(w.text, x, lineY);
+      } else {
+        ctx.fillStyle = w.kicker ? (style.kickerColor ?? '#ffd54a') : style.color;
+        ctx.fillText(w.text, x, lineY);
+      }
+
       ctx.shadowColor = 'transparent';
       x += ww + ctx.measureText(' ').width;
       charsUsed += 1; // the separating space
+      wordIndex++;
     }
     ctx.restore();
   });

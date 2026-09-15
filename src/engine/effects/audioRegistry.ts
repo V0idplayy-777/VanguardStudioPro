@@ -328,6 +328,39 @@ export const AUDIO_EFFECTS: EffectDef[] = [
     ],
   ),
   adef(
+    'aVoiceIsolation',
+    'Voice Isolation',
+    'Audio: Dynamics',
+    'AI/DSP vocal formant isolation that isolates human dialogue from music, room reverb, and background noise.',
+    [
+      n('intensity', 'Isolation Intensity', 80, 0, 100, 1, { unit: '%' }),
+      n('clarity', 'Formant Clarity', 50, 0, 100, 1, { unit: '%' }),
+      n('noiseFloor', 'Noise Floor', -50, -80, -20, 0.5, { unit: 'dB' }),
+    ],
+    [
+      { name: 'Aggressive Cleanup', values: { intensity: 95, clarity: 70, noiseFloor: -60 } },
+      { name: 'Natural Dialogue', values: { intensity: 65, clarity: 40, noiseFloor: -45 } },
+    ],
+  ),
+  adef(
+    'aSidechainCompressor',
+    'Sidechain Compressor (Ducking)',
+    'Audio: Dynamics',
+    'Ducks this track (e.g. music) whenever speech signal is present on a designated sidechain source track.',
+    [
+      n('threshold', 'Threshold', -18, -60, 0, 0.5, { unit: 'dB' }),
+      n('ratio', 'Ratio', 4, 1, 20, 0.1),
+      n('ducking', 'Max Ducking', -12, -40, 0, 0.5, { unit: 'dB' }),
+      n('attack', 'Attack', 10, 1, 200, 1, { unit: 'ms' }),
+      n('release', 'Release', 150, 10, 1000, 1, { unit: 'ms' }),
+      n('sourceTrack', 'Sidechain Source Track', 0, 0, 16, 1),
+    ],
+    [
+      { name: 'Music Ducking', values: { threshold: -20, ratio: 4, ducking: -14, attack: 15, release: 250 } },
+      { name: 'Gentle Radio Duck', values: { threshold: -15, ratio: 2.5, ducking: -8, attack: 25, release: 300 } },
+    ],
+  ),
+  adef(
     'aVoiceDenoise',
     'Voice Denoise (Realtime)',
     'Audio: Dynamics',

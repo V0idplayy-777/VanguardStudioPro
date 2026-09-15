@@ -5,7 +5,8 @@ import { usePlayback, presentTo, scheduleRender } from '../../engine/playback/pl
 import { IconButton, MenuButton, TimecodeField, useElementSize, Select } from '../controls';
 import { cmd } from '../../app/commands';
 import { Icon } from '../icons';
-import type { Clip, Sequence } from '../../types/project';
+import type { Clip, Sequence, PlatformId } from '../../types/project';
+import { PLATFORM_SAFE_AREAS, platformSafeArea } from '../../types/project';
 import { evalParam } from '../../engine/keyframes';
 import { clamp } from '../../engine/util';
 import { MIME_ASSETS, useTimelineView } from '../timeline/timelineState';
@@ -253,6 +254,19 @@ export function ProgramMonitor() {
         <div className="spacer" />
         <Select value={String(ui.programZoom)} options={zoomOptions} onChange={(v) => ui.setProgramZoom(v === 'fit' ? 'fit' : Number(v))} style={{ width: 62, height: 18, fontSize: 11 }} title="Zoom level" />
         <Select value={ui.programQuality} options={[{ value: 'full', label: 'Full' }, { value: 'half', label: '1/2' }, { value: 'quarter', label: '1/4' }]} onChange={(v) => ui.setProgramQuality(v as any)} style={{ width: 58, height: 18, fontSize: 11 }} title="Playback resolution" />
+        <Select
+          value={seq?.settings.deliveryPlatform ?? 'none'}
+          options={PLATFORM_SAFE_AREAS.map((p) => ({ value: p.id, label: p.label }))}
+          onChange={(v) => {
+            if (!seq) return;
+            useProject.getState().update('Set Platform Guides', (p) => {
+              const s = p.sequences.find((x) => x.id === seq.id);
+              if (s) s.settings.deliveryPlatform = v as PlatformId;
+            });
+          }}
+          style={{ width: 90, height: 18, fontSize: 11 }}
+          title="Platform Safe-Area Guides"
+        />
         <IconButton icon="safeMargins" label="Safe margins" sm on={ui.programOverlay.includes('safeMargins')} onClick={() => ui.toggleProgramOverlay('safeMargins')} />
         <IconButton icon="grid" label="Grid" sm on={ui.programOverlay.includes('grid')} onClick={() => ui.toggleProgramOverlay('grid')} />
         <IconButton icon="transparent" label="Transparency grid" sm on={ui.transparencyGrid} onClick={() => ui.setTransparencyGrid(!ui.transparencyGrid)} />
@@ -344,12 +358,45 @@ export function ProgramMonitor() {
   );
 }
 
-/** Static monitor overlays (safe margins / grid / pixel rulers). */
+/** Static monitor overlays (safe margins / grid / pixel rulers / platform guides). */
 function drawStaticOverlays(cv: HTMLCanvasElement, W: number, H: number, seq: Sequence, overlays: readonly string[]) {
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   const ctx = cv.getContext('2d')!;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, W, H);
+
+  // Platform Safe Areas (TikTok, Reels, Shorts, etc.)
+  const platform = platformSafeArea(seq.settings.deliveryPlatform);
+  if (platform && platform.id !== 'none') {
+    ctx.save();
+    ctx.strokeStyle = '#ffd54a';
+    ctx.fillStyle = 'rgba(255, 213, 74, 0.15)';
+    ctx.lineWidth = 1.5;
+
+    const t = H * platform.top;
+    const b = H * (1 - platform.bottom);
+    const l = W * platform.left;
+    const r = W * (1 - platform.right);
+
+    // Safe zone box
+    ctx.setLineDash([4, 4]);
+    ctx.strokeRect(l, t, r - l, b - t);
+
+    // Caption zone hint box
+    if (platform.captionZone) {
+      const cz = platform.captionZone;
+      ctx.strokeStyle = 'rgba(255, 100, 100, 0.8)';
+      ctx.strokeRect(W * cz.x, H * cz.y, W * cz.w, H * cz.h);
+      ctx.fillStyle = 'rgba(255, 100, 100, 0.08)';
+      ctx.fillRect(W * cz.x, H * cz.y, W * cz.w, H * cz.h);
+    }
+
+    ctx.fillStyle = '#ffd54a';
+    ctx.font = '500 10px "Inter Variable", Inter, sans-serif';
+    ctx.fillText(`${platform.label} Safe Zone (${platform.aspect})`, l + 4, t + 12);
+    ctx.restore();
+  }
+
   if (overlays.includes('safeMargins')) {
     ctx.strokeStyle = 'rgba(224,224,224,0.55)';
     ctx.lineWidth = 1;

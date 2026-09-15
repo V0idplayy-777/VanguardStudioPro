@@ -123,6 +123,15 @@ function buildItems(): Item[] {
   C('splitScreen', 'Split Screen / Picture-in-Picture...', () => ui.openModal({ kind: 'splitScreen' }), 'Editing', 'Arrange 2-4 selected clips into a layout, each on its own track');
   C('autoMontage', 'Auto Montage (Cut to Music)...', () => ui.openModal({ kind: 'autoMontage' }), 'Editing', 'Build a new beat-synced montage sequence from your media');
   C('syncAudio', 'Sync Clips by Audio...', () => ui.openModal({ kind: 'syncAudio' }), 'Audio', 'Align double-system recordings by cross-correlating their waveforms');
+  C('mixTarget', 'Mix to Target Loudness...', () => void cmd.mixToTargetLoudness(), 'Audio', 'Normalize sequence loudness to -14 LUFS, EBU R128 or Podcast standards');
+  C('renderReplace', 'Render and Replace...', () => void cmd.renderAndReplace(), 'Editing', 'Bake clip effects and retiming into a flat high-performance asset');
+  C('restoreReplace', 'Restore Unrendered Clip', () => cmd.restoreUnrenderedClip(), 'Editing', 'Restore original source asset and speed for a rendered clip');
+  C('jCut', 'Create J-Cut (Audio Lead)...', () => cmd.createJCut(), 'Editing', 'Extend audio to start before video');
+  C('lCut', 'Create L-Cut (Audio Lag)...', () => cmd.createLCut(), 'Editing', 'Extend audio to continue past video end');
+  C('multicam', 'Create Multicam Sequence...', () => void cmd.createMulticamSequence(), 'Editing', 'Build a synced multi-angle camera sequence from selected project clips');
+  C('exportFcpxml', 'Export Final Cut Pro XML (FCPXML)...', () => void cmd.exportFcpxml(), 'Export', 'Export sequence XML for DaVinci Resolve or Final Cut Pro');
+  C('exportPremiereXml', 'Export Premiere Pro XML...', () => void cmd.exportPremiereXml(), 'Export', 'Export sequence XMEML for Premiere Pro');
+  C('importXml', 'Import FCPXML / Premiere XML...', () => void cmd.importXmlFile(), 'Import', 'Import an FCPXML or Premiere XML sequence file');
   C('renderQueue', 'Add Sequence to Render Queue', () => cmd.addToRenderQueue(), 'Export', 'Batch-export later from the Export panel');
   C('sceneDetect', 'Scene Detection...', () => ui.openModal({ kind: 'sceneDetect' }), 'Color');
   C('duck', 'Auto Duck Music...', () => ui.openModal({ kind: 'autoDucking' }), 'Audio');

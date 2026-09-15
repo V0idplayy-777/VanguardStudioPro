@@ -34,7 +34,8 @@ type DragState =
   | { kind: 'marquee'; x0: number; y0: number; x1: number; y1: number; additive: boolean }
   | { kind: 'scrub' }
   | { kind: 'hand'; startScroll: number; startY: number }
-  | { kind: 'transition'; clipId: Id; edge: 'in' | 'out'; startDur: number; began: boolean };
+  | { kind: 'transition'; clipId: Id; edge: 'in' | 'out'; startDur: number; began: boolean }
+  | { kind: 'fadeHandle'; id: Id; part: 'fadeInHandle' | 'fadeOutHandle'; startVal: number; startFrame: number; began: boolean };
 
 export function TimelinePanel() {
   const seq = useActiveSequence();
@@ -187,7 +188,7 @@ export function TimelinePanel() {
       p.sequences[idx] = fresh;
     });
 
-  const onClipPointerDown = (clip: Clip, e: React.PointerEvent, part: 'body' | 'trimL' | 'trimR' | 'rubber' | 'kf' | 'transIn' | 'transOut', extra?: any) => {
+  const onClipPointerDown = (clip: Clip, e: React.PointerEvent, part: 'body' | 'trimL' | 'trimR' | 'rubber' | 'kf' | 'transIn' | 'transOut' | 'fadeInHandle' | 'fadeOutHandle', extra?: any) => {
     if (!seq) return;
     const track = seq.tracks.find((t) => t.id === clip.trackId)!;
     if (e.button === 2) {
@@ -203,6 +204,14 @@ export function TimelinePanel() {
     const px = e.clientX - lanes.left;
     const frameAt = Math.round(xToFrame(px));
     const t: ToolId = tool;
+
+    if (part === 'fadeInHandle' || part === 'fadeOutHandle') {
+      batchStart.current = seq;
+      beginBatch(part === 'fadeInHandle' ? 'Fade In' : 'Fade Out');
+      const startVal = part === 'fadeInHandle' ? (clip.audio.fadeIn ?? 0) : (clip.audio.fadeOut ?? 0);
+      setDrag({ kind: 'fadeHandle', id: clip.id, part, startVal, startFrame: frameAt, began: false } as any);
+      return;
+    }
 
     if (part === 'transIn' || part === 'transOut') {
       const edge = part === 'transIn' ? 'in' : 'out';
@@ -523,6 +532,20 @@ export function TimelinePanel() {
             for (const l of linked ? E.linkedClips(s, c) : [c]) E.slideClip(s, l.id, delta);
           });
           useTimelineView.getState().setHover({ x: e.clientX + 12, y: e.clientY - 24, text: `Slide ${delta >= 0 ? '+' : ''}${delta}` });
+          break;
+        }
+        case 'fadeHandle': {
+          const delta = Math.round(frame - (d as any).startFrame);
+          (d as any).began = true;
+          fromStart((s) => {
+            const c = s.clips.find((x) => x.id === (d as any).id);
+            if (!c) return;
+            if ((d as any).part === 'fadeInHandle') {
+              c.audio.fadeIn = Math.max(0, Math.min(c.duration, (d as any).startVal + delta));
+            } else {
+              c.audio.fadeOut = Math.max(0, Math.min(c.duration, (d as any).startVal - delta));
+            }
+          });
           break;
         }
         case 'rubber': {
@@ -1046,6 +1069,7 @@ export function TimelinePanel() {
         <div className="vsep" />
         <IconButton icon="snap" label="Snap" title="Snap in Timeline (S)" on={snapping} onClick={() => setSnapping(!snapping)} />
         <IconButton icon="link" label="Linked Selection" title="Linked Selection" on={linked} onClick={() => setLinked(!linked)} />
+        <IconButton icon="pancake" label="Pancake Timeline (Selects Workflow)" title="Toggle Stacked Dual Timelines" on={ui.getState().pancakeMode} onClick={() => ui.getState().setPancakeMode(!ui.getState().pancakeMode)} />
         <IconButton icon="marker" label="Add Marker" title="Add Marker (M)" onClick={() => cmd.addMarker()} />
         <MenuButton
           icon="wrench"

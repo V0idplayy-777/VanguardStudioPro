@@ -1713,6 +1713,107 @@ export const cmd = {
   addToRenderQueue() {
     void import('../engine/export/queue').then((m) => m.useRenderQueue.getState().addActiveSequence());
   },
+
+  /* ---------- new advanced features ---------- */
+  async renderAndReplace() {
+    const seq = seqNow();
+    const clips = selectedClips();
+    if (!seq || !clips.length) return;
+    const { renderAndReplaceClip } = await import('../engine/timeline/renderReplace');
+    for (const c of clips) {
+      await renderAndReplaceClip(seq.id, c.id);
+    }
+  },
+
+  restoreUnrenderedClip() {
+    const seq = seqNow();
+    const clips = selectedClips();
+    if (!seq || !clips.length) return;
+    void import('../engine/timeline/renderReplace').then(({ restoreUnrenderedClip }) => {
+      for (const c of clips) restoreUnrenderedClip(seq.id, c.id);
+    });
+  },
+
+  createJCut(frames = 30) {
+    const seq = seqNow();
+    const clips = selectedClips();
+    if (!seq || !clips.length) return;
+    void import('../engine/timeline/jlCuts').then(({ applyJCut }) => {
+      for (const c of clips) applyJCut(seq.id, c.id, frames);
+    });
+  },
+
+  createLCut(frames = 30) {
+    const seq = seqNow();
+    const clips = selectedClips();
+    if (!seq || !clips.length) return;
+    void import('../engine/timeline/jlCuts').then(({ applyLCut }) => {
+      for (const c of clips) applyLCut(seq.id, c.id, frames);
+    });
+  },
+
+  async createMulticamSequence() {
+    const selectedAssetIds = projectSelection.get();
+    if (!selectedAssetIds.length) {
+      toast('warning', 'Multicam', 'Select 2 or more media clips in the Project panel first.');
+      return;
+    }
+    const { createMulticamSequenceFromAssets } = await import('../engine/timeline/multicam');
+    await createMulticamSequenceFromAssets(selectedAssetIds);
+  },
+
+  async mixToTargetLoudness(preset: any = 'youtube') {
+    const seq = seqNow();
+    if (!seq) return;
+    const { mixSequenceToTarget } = await import('../engine/audio/mixToTarget');
+    await mixSequenceToTarget(seq.id, preset);
+  },
+
+  async exportFcpxml() {
+    const seq = seqNow();
+    const project = useProject.getState().project;
+    if (!seq) return;
+    const { exportFcpxml } = await import('../engine/export/fcpxml');
+    const xml = exportFcpxml(seq, project);
+    const blob = new Blob([xml], { type: 'application/xml' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${seq.name.replace(/[^\w\-. ]+/g, '_')}.fcpxml`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast('success', 'FCPXML Exported', `Exported ${seq.name}.fcpxml`);
+  },
+
+  async exportPremiereXml() {
+    const seq = seqNow();
+    const project = useProject.getState().project;
+    if (!seq) return;
+    const { exportPremiereXml } = await import('../engine/export/premiereXml');
+    const xml = exportPremiereXml(seq, project);
+    const blob = new Blob([xml], { type: 'application/xml' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${seq.name.replace(/[^\w\-. ]+/g, '_')}.xml`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast('success', 'Premiere XML Exported', `Exported ${seq.name}.xml`);
+  },
+
+  async importXmlFile() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.xml,.fcpxml';
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      const text = await file.text();
+      const { parseAndImportXml } = await import('../engine/import/xmlImport');
+      parseAndImportXml(text, file.name);
+    };
+    input.click();
+  },
 };
 
 /** The clip Remove Silence / Normalize Audio operate on: first selected clip with audio, else the first one. */

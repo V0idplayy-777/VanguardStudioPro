@@ -327,5 +327,7 @@ export const PANEL_TITLES: Record<PanelId, string> = {
   mediaBrowser: 'Media Browser',
   storyboard: 'Storyboard',
   retention: 'Retention',
+  textEditing: 'Text-Based Editing',
+  multicam: 'Multicam Switcher',
   learn: 'Learn',
 };

@@ -17,6 +17,8 @@ import { ExportPanel } from '../panels/ExportPanel';
 import { ToolsPanel, LibrariesPanel, MediaBrowserPanel } from '../panels/MiscPanels';
 import { StoryboardPanel } from '../panels/StoryboardPanel';
 import { RetentionPanel } from '../panels/RetentionPanel';
+import { TextBasedEditingPanel } from '../panels/TextBasedEditingPanel';
+import { MulticamPanel } from '../panels/MulticamPanel';
 
 class PanelBoundary extends React.Component<{ children: React.ReactNode; name: string }, { error: Error | null }> {
   state = { error: null as Error | null };
@@ -63,6 +65,8 @@ const REGISTRY: Record<PanelId, React.ComponentType> = {
   mediaBrowser: MediaBrowserPanel,
   storyboard: StoryboardPanel,
   retention: RetentionPanel,
+  textEditing: TextBasedEditingPanel,
+  multicam: MulticamPanel,
   learn: LearnPanel,
 };
 

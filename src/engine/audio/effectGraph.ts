@@ -694,6 +694,86 @@ function buildOne(ctx: BaseAudioContext, e: EffectInstance): Built {
       update(0);
       return { input, output: out, update, nodes: [input, dry, wet, shaper, out] };
     }
+    case 'aVoiceIsolation': {
+      // Voice isolation: 80Hz rumble hp + 10kHz lp + vocal formant peaking + downward expansion
+      const input = ctx.createGain();
+      const hp = ctx.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.frequency.value = 80;
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 10000;
+      const formant = ctx.createBiquadFilter();
+      formant.type = 'peaking';
+      formant.frequency.value = 2500;
+      formant.Q.value = 1.2;
+      const shaper = ctx.createWaveShaper();
+      shaper.oversample = '2x';
+      const out = ctx.createGain();
+
+      input.connect(hp).connect(lp).connect(formant).connect(shaper).connect(out);
+
+      const update = (fr: number) => {
+        const intensity = Math.max(0, Math.min(100, n('intensity', fr))) / 100;
+        const clarity = Math.max(0, Math.min(100, n('clarity', fr))) / 100;
+        const nf = Math.pow(10, n('noiseFloor', fr) / 20);
+
+        formant.gain.setTargetAtTime(clarity * 6, t, 0.02);
+        shaper.curve = expanderCurve(nf, 1 + intensity * 3.5, 0.01);
+      };
+      update(0);
+      return { input, output: out, update, nodes: [input, hp, lp, formant, shaper, out] };
+    }
+    case 'aSidechainCompressor': {
+      // Sidechain compressor (ducking)
+      const input = ctx.createGain();
+      const duckGain = ctx.createGain();
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 512;
+
+      input.connect(duckGain);
+      input.connect(analyser);
+
+      const data = new Float32Array(analyser.fftSize);
+      let currentDucking = 1;
+      let raf = 0;
+
+      const tick = () => {
+        analyser.getFloatTimeDomainData(data);
+        let sum = 0;
+        for (let i = 0; i < data.length; i++) sum += data[i] * data[i];
+        const rms = Math.sqrt(sum / data.length);
+        const db = rms > 0 ? 20 * Math.log10(rms) : -100;
+
+        const thr = n('threshold', lastFrame);
+        const maxDuckingDb = n('ducking', lastFrame);
+        const maxDuckingGain = dbToGain(maxDuckingDb);
+        const atk = Math.max(1, n('attack', lastFrame)) / 1000;
+        const rel = Math.max(10, n('release', lastFrame)) / 1000;
+
+        let target = 1;
+        if (db > thr) {
+          const ratio = Math.max(1, n('ratio', lastFrame));
+          const overDb = db - thr;
+          const duckAmount = Math.min(0, -overDb * (1 - 1 / ratio));
+          target = Math.max(maxDuckingGain, dbToGain(duckAmount));
+        }
+
+        const coef = target < currentDucking ? atk : rel;
+        duckGain.gain.setTargetAtTime(target, ctx.currentTime, coef);
+        currentDucking = target;
+        raf = requestAnimationFrame(tick);
+      };
+
+      let lastFrame = 0;
+      raf = requestAnimationFrame(tick);
+      const update = (fr: number) => {
+        lastFrame = fr;
+      };
+      const built: Built & { stop?: () => void } = { input, output: duckGain, update, nodes: [input, duckGain, analyser] };
+      (built as any).stop = () => cancelAnimationFrame(raf);
+      return built;
+    }
     case 'aVoiceDenoise': {
       // Dynamic hiss filter: tame only the high band when it is quiet.
       const input = ctx.createGain();
